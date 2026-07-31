@@ -1,4 +1,5 @@
 import * as db from './db.js';
+import { DEMO_MODE } from './db.js';
 import * as ai from './ai.js';
 import { BASIS_OPTIONS, PROTEINE_OPTIONS, KEUKEN_OPTIONS, DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
 import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, fileToResizedBase64, downloadJSON, slugify } from './utils.js';
@@ -94,7 +95,19 @@ function rerender() {
 }
 
 function renderMain() {
-  return `${renderHeaderNav()}<main class="wrap">${renderActiveView()}</main>`;
+  return `${renderHeaderNav()}${renderDemoBanner()}<main class="wrap">${renderActiveView()}</main>`;
+}
+
+function renderDemoBanner() {
+  if (!DEMO_MODE) return '';
+  return `
+    <div class="wrap mt-4">
+      <div class="banner banner-info" style="margin-bottom:0">
+        ${icon('sparkles')}
+        <span>Demo-modus: Supabase is nog niet ingesteld, dus je ziet voorbeeldrecepten. Wijzigingen worden niet bewaard totdat je <span class="mono">config.js</span> invult (zie README.md).</span>
+      </div>
+    </div>
+  `;
 }
 
 function renderActiveView() {
