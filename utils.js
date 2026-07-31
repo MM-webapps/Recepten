@@ -1,5 +1,5 @@
-// Kleine hulpfuncties, gebruikt door app.js en ai.js.
-import { DAGEN } from './constants.js';
+// Kleine hulpfuncties, gebruikt door app.js.
+import { DAGEN, BASIS_OPTIONS, PROTEINE_OPTIONS, KEUKEN_OPTIONS } from './constants.js';
 
 export function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({
@@ -67,63 +67,6 @@ export function buildShoppingList(weekmenu, recipes, huishoudPersonen, fridgeIte
     .sort((a, b) => a.naam.localeCompare(b.naam));
 }
 
-// Zoekt het eerste volledige JSON-object in een stuk tekst (negeert tekst
-// ervoor/erna en accolades binnen strings).
-export function extractJsonObject(text) {
-  if (!text) return null;
-  let cleaned = text.trim().replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
-  const start = cleaned.indexOf('{');
-  if (start === -1) return null;
-  let depth = 0, inStr = false, esc = false;
-  for (let i = start; i < cleaned.length; i++) {
-    const ch = cleaned[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === '\\') esc = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') { inStr = true; continue; }
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) {
-        const jsonStr = cleaned.slice(start, i + 1);
-        try { return JSON.parse(jsonStr); } catch (e) { return null; }
-      }
-    }
-  }
-  return null;
-}
-
-// Comprimeert een foto naar een redelijke grootte en geeft base64 (zonder
-// data-URL-prefix) + media type terug, klaar om naar de Anthropic API te sturen.
-export function fileToResizedBase64(file, maxDim = 1500, quality = 0.85) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) { height = Math.round((height * maxDim) / width); width = maxDim; }
-          else { width = Math.round((width * maxDim) / height); height = maxDim; }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        resolve(dataUrl.split(',')[1]);
-      };
-      img.onerror = () => reject(new Error('Kon de foto niet laden.'));
-      img.src = reader.result;
-    };
-    reader.onerror = () => reject(new Error('Kon het bestand niet lezen.'));
-    reader.readAsDataURL(file);
-  });
-}
-
 export function downloadJSON(obj, filename) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -134,6 +77,38 @@ export function downloadJSON(obj, filename) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// Zet een (los) JSON-object om naar een geldig recept-object voor het
+// formulier: dwingt kenmerken af tot een geldige optie, vult ontbrekende
+// velden met redelijke standaardwaarden, en negeert onbruikbare regels.
+export function normalizeRecipeJson(raw) {
+  raw = raw || {};
+  const pick = (val, options, fallback) => {
+    if (!val) return fallback;
+    const found = options.find((o) => o.toLowerCase() === String(val).toLowerCase());
+    return found || fallback;
+  };
+  return {
+    titel: raw.titel ? String(raw.titel).trim() : 'Naamloos recept',
+    basis: pick(raw.basis, BASIS_OPTIONS, 'Overig'),
+    proteine: pick(raw.proteine, PROTEINE_OPTIONS, 'Geen'),
+    keuken: pick(raw.keuken, KEUKEN_OPTIONS, 'Overig'),
+    personen: Number(raw.personen) > 0 ? Math.round(Number(raw.personen)) : 4,
+    bereidingstijd: Number(raw.bereidingstijd) > 0 ? Math.round(Number(raw.bereidingstijd)) : 30,
+    ingredienten: Array.isArray(raw.ingredienten)
+      ? raw.ingredienten
+          .map((ing) => ({
+            naam: ing && ing.naam ? String(ing.naam).trim() : '',
+            hoeveelheid: ing && ing.hoeveelheid !== '' && ing.hoeveelheid != null && !isNaN(Number(ing.hoeveelheid))
+              ? Number(ing.hoeveelheid) : null,
+            eenheid: ing && ing.eenheid ? String(ing.eenheid).trim() : ''
+          }))
+          .filter((i) => i.naam)
+      : [],
+    instructies: Array.isArray(raw.instructies) ? raw.instructies.map((s) => String(s).trim()).filter(Boolean) : [],
+    bron: raw.bron ? String(raw.bron).trim() : ''
+  };
 }
 
 export function slugify(str) {

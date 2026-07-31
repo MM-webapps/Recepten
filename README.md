@@ -1,11 +1,23 @@
 # Receptenkist
 
 Een persoonlijke receptenapp: recepten met kenmerken (basis, proteïne, keuken,
-personen), een weekmenu, een koelkast-check en een boodschappenlijst — met
-optionele AI-import van recepten vanaf een link of foto.
+personen), een weekmenu, een koelkast-check en een boodschappenlijst.
+Recepten voeg je handmatig toe, of door een `.json`-bestand te uploaden dat
+je zelf met een AI-tool hebt gemaakt (zie `ai-prompt.md`).
 
 Pure HTML/CSS/JS, geen build-stap. Data staat in Supabase, hosting via GitHub
 Pages.
+
+## 0. Meteen bekijken zonder Supabase (demo-modus)
+
+Je hoeft niet eerst Supabase in te stellen om de site te zien werken. Zolang
+`config.js` nog de placeholder-waarden bevat, start de app automatisch in
+**demo-modus**: je krijgt een paar voorbeeldrecepten te zien en alle
+functies (filteren, weekmenu, koelkast, boodschappenlijst) werken gewoon —
+alleen worden wijzigingen niet opgeslagen; ze verdwijnen bij het herladen
+van de pagina. Zo kun je de site direct pushen naar GitHub Pages en meteen
+bekijken, en pas daarna Supabase koppelen (stap 1 hieronder) zodra je je
+eigen recepten wilt gaan bewaren.
 
 ## 1. Supabase instellen
 
@@ -42,28 +54,25 @@ Ga dan naar `http://localhost:8000`. Zonder lokale server (of als
 ## 3. Hosten op GitHub Pages
 
 1. Maak een nieuwe GitHub-repository en push alle bestanden uit deze map
-   (`index.html`, `style.css`, `app.js`, `db.js`, `ai.js`, `constants.js`,
+   (`index.html`, `style.css`, `app.js`, `db.js`, `constants.js`,
    `utils.js`, `config.js`) naar de `main`-branch.
 2. Ga in de repo naar **Settings → Pages**.
 3. Kies bij **Source**: `Deploy from a branch`, branch `main`, map `/ (root)`.
 4. Na een minuut is de site live op `https://<gebruikersnaam>.github.io/<repo-naam>/`.
 
-## 4. AI-import instellen (optioneel)
+## 4. Recepten toevoegen
 
-De knop **"recept vanaf link/foto"** gebruikt de Anthropic API rechtstreeks
-vanuit je browser, met je eigen API-key:
+In de app, via **Nieuw recept**, kies je tussen:
 
-1. Maak een key op [console.anthropic.com](https://console.anthropic.com/settings/keys).
-2. Klik in de app op **AI-key** (rechtsboven) en plak de key.
-
-De key wordt alleen lokaal in jouw browser bewaard (`localStorage`) — nooit
-in de GitHub-repo. Let op: omdat de aanroep vanuit de browser gebeurt, is de
-key zichtbaar in het netwerkverkeer van jouw eigen sessie. Voor een
-persoonlijke tool is dat een geaccepteerd patroon (Anthropic ondersteunt dit
-expliciet via een speciale header), maar deel je site-URL dus niet met
-mensen die je key niet zouden mogen gebruiken. Zonder key werkt de rest van
-de app (handmatig recepten toevoegen, weekmenu, koelkast, boodschappenlijst)
-gewoon.
+- **Handmatig** — alle velden zelf invullen.
+- **JSON uploaden** — een `.json`-bestand kiezen dat je zelf eerst met een
+  AI-tool (Claude, ChatGPT, …) hebt gemaakt van een recept (tekst, link, of
+  een foto die je erbij beschrijft). Gebruik daarvoor de prompt uit
+  `ai-prompt.md` — die dwingt de AI om exact het schema te gebruiken dat
+  deze app verwacht. Na het uploaden krijg je het recept nog even te zien
+  om te controleren en aan te passen voordat het wordt opgeslagen.
+  Je kunt ook een JSON-*array* met meerdere recepten in één keer uploaden;
+  die worden dan direct allemaal geïmporteerd (zonder controlestap).
 
 ## Beveiliging — belangrijk om te weten
 
@@ -87,9 +96,9 @@ Je hebt gekozen voor **geen login**. Dat betekent:
 | `index.html`     | HTML-skelet, laadt de stylesheet en `app.js`                  |
 | `style.css`      | Vormgeving                                                     |
 | `config.js`      | **Hier vul je je Supabase-gegevens in**                        |
-| `db.js`          | Alle Supabase-lees/schrijffuncties                              |
-| `ai.js`          | AI-import (link/foto → JSON) via de Anthropic API              |
+| `db.js`          | Alle Supabase-lees/schrijffuncties (met ingebouwde demo-modus)  |
 | `constants.js`   | Kenmerk-opties (basis/proteïne/keuken), dagen, kleuren          |
-| `utils.js`       | Hulpfuncties: matching, boodschappenlijst, JSON-parsing         |
+| `utils.js`       | Hulpfuncties: matching, boodschappenlijst, JSON-validatie       |
 | `app.js`         | De applicatie zelf: state, rendering, events                    |
 | `schema.sql`      | Het hele Supabase-schema, in één keer te runnen                |
+| `ai-prompt.md`   | Prompt om recepten met een AI-tool naar het juiste JSON-formaat om te zetten |

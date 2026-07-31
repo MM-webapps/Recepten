@@ -1,8 +1,7 @@
 import * as db from './db.js';
 import { DEMO_MODE } from './db.js';
-import * as ai from './ai.js';
 import { BASIS_OPTIONS, PROTEINE_OPTIONS, KEUKEN_OPTIONS, DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
-import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, fileToResizedBase64, downloadJSON, slugify } from './utils.js';
+import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson } from './utils.js';
 
 const state = {
   loaded: false,
@@ -124,7 +123,6 @@ function renderModalRoot() {
     else if (state.modal.type === 'view') html += renderViewModal(getRecipe(state.modal.id));
     else if (state.modal.type === 'edit') html += renderEditModal(getRecipe(state.modal.id));
     else if (state.modal.type === 'pick') html += renderPickModal(state.modal.day);
-    else if (state.modal.type === 'ai-settings') html += renderAiSettingsModal();
   }
   if (state.confirm) html += renderConfirmDialog(state.confirm.message);
   return html;
@@ -147,7 +145,6 @@ function renderHeaderNav() {
       <div class="wrap header-top">
         <div class="brand">${icon('chef-hat')}<span class="display">Receptenkist</span></div>
         <div class="flex gap-2">
-          <button class="btn btn-outline btn-sm" data-action="open-ai-settings">${icon('sparkles')} AI-key</button>
           <button class="btn btn-primary btn-sm" data-action="open-add">${icon('plus')} Nieuw recept</button>
         </div>
       </div>
@@ -539,7 +536,7 @@ async function handleRecipeFormSubmit(e) {
   }
 }
 
-// ─────────────────────────────────────────── Modal: Nieuw recept (handmatig / link / foto)
+// ─────────────────────────────────────────── Modal: Nieuw recept (handmatig / JSON-upload)
 function renderAddModal() {
   const m = state.modal;
   let inner = '';
@@ -550,91 +547,63 @@ function renderAddModal() {
         <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
       </div>
       <p class="text-sm text-soft mb-4">Kies hoe je het recept wilt toevoegen.</p>
-      <div class="method-grid">
+      <div class="method-grid" style="grid-template-columns:1fr 1fr">
         <button class="btn btn-outline method-btn" data-action="ai-method" data-method="manual">${icon('pencil')}<span>Handmatig</span><span class="hint">Zelf alles invullen</span></button>
-        <button class="btn btn-outline method-btn" data-action="ai-method" data-method="link">${icon('link-2')}<span>Vanaf link</span><span class="hint">AI leest de pagina</span></button>
-        <button class="btn btn-outline method-btn" data-action="ai-method" data-method="foto">${icon('camera')}<span>Vanaf foto</span><span class="hint">AI leest de foto</span></button>
+        <button class="btn btn-outline method-btn" data-action="ai-method" data-method="json">${icon('upload')}<span>JSON uploaden</span><span class="hint">Bestand van jouw AI-prompt</span></button>
       </div>
     `;
-  } else if (m.step === 'link') {
+  } else if (m.step === 'json') {
     inner = `
       <div class="flex items-center gap-2 mb-1">
         <button class="btn btn-outline btn-icon" data-action="ai-back">${icon('arrow-left')}</button>
-        <h2 class="display" style="font-size:20px;margin:0">Recept vanaf link</h2>
+        <h2 class="display" style="font-size:20px;margin:0">Recept vanaf JSON</h2>
       </div>
-      <p class="text-sm text-soft mb-3">Plak de link naar een receptpagina. De AI zoekt de pagina op en vult de velden voor je in.</p>
-      <input id="ai-link-url" class="input mb-3" placeholder="https://..." ${m.busy ? 'disabled' : ''}>
-      ${m.error ? bannerError(m.error) : ''}
-      <div class="flex gap-2">
-        <button class="btn btn-primary" data-action="analyze-link" ${m.busy ? 'disabled' : ''}>
-          ${m.busy ? icon('loader-2', 'spin') : icon('sparkles')} ${m.busy ? 'Recept analyseren...' : 'Analyseer recept'}
-        </button>
-        <button class="btn btn-outline" data-action="ai-method" data-method="manual" ${m.busy ? 'disabled' : ''}>Toch handmatig invullen</button>
-      </div>
-    `;
-  } else if (m.step === 'foto') {
-    inner = `
-      <div class="flex items-center gap-2 mb-1">
-        <button class="btn btn-outline btn-icon" data-action="ai-back">${icon('arrow-left')}</button>
-        <h2 class="display" style="font-size:20px;margin:0">Recept vanaf foto</h2>
-      </div>
-      <p class="text-sm text-soft mb-3">Maak een foto van een recept (kookboek, tijdschrift, briefje) of upload er een.</p>
+      <p class="text-sm text-soft mb-3">Kies een .json-bestand met één recept (of een lijst van recepten) volgens het schema uit README.md.</p>
       <label class="file-drop">
-        ${icon('image-plus')}<span>Klik om een foto te kiezen</span>
-        <input id="ai-photo-input" type="file" accept="image/*" class="hidden" ${m.busy ? 'disabled' : ''}>
+        ${icon('upload')}<span>Klik om een .json-bestand te kiezen</span>
+        <input id="json-file-input" type="file" accept=".json,application/json" class="hidden">
       </label>
-      ${m.photoPreviewUrl ? `<img class="photo-preview" src="${m.photoPreviewUrl}" alt="Voorbeeld van het recept">` : ''}
+      ${m.fileName ? `<p class="text-sm text-soft mb-2">Gekozen bestand: <span class="mono">${escapeHtml(m.fileName)}</span></p>` : ''}
       ${m.error ? bannerError(m.error) : ''}
-      <div class="flex gap-2">
-        <button class="btn btn-primary" data-action="analyze-photo" ${m.busy ? 'disabled' : ''}>
-          ${m.busy ? icon('loader-2', 'spin') : icon('sparkles')} ${m.busy ? 'Foto analyseren...' : 'Analyseer foto'}
-        </button>
-        <button class="btn btn-outline" data-action="ai-method" data-method="manual" ${m.busy ? 'disabled' : ''}>Toch handmatig invullen</button>
-      </div>
+      ${m.info ? `<div class="banner banner-info">${icon('sparkles')}<span>${escapeHtml(m.info)}</span></div>` : ''}
     `;
   } else {
     inner = renderRecipeFormFields(m.step === 'vorm' ? m.draftRecipe : null, {
       heading: m.step === 'vorm' ? 'Controleer het recept' : 'Nieuw recept',
-      subheading: m.step === 'vorm' ? 'De AI heeft dit ingevuld — controleer en pas aan waar nodig.' : null,
+      subheading: m.step === 'vorm' ? 'Uit het JSON-bestand — controleer en pas aan waar nodig.' : null,
       submitLabel: 'Recept opslaan'
     });
   }
   return `<div class="modal-backdrop"><div class="modal-card">${inner}</div></div>`;
 }
 
-async function handleAnalyzeLink() {
-  const input = document.getElementById('ai-link-url');
-  const url = input.value.trim();
-  if (!url) { state.modal.error = 'Plak eerst een link naar het recept.'; rerender(); return; }
-  state.modal.busy = true; state.modal.error = '';
-  rerender();
+async function handleJsonFile(file) {
+  state.modal.fileName = file.name;
+  state.modal.error = '';
+  state.modal.info = '';
   try {
-    const recipe = await ai.extractRecipeFromLink(url);
+    const text = await file.text();
+    const raw = JSON.parse(text);
+    if (Array.isArray(raw)) {
+      const recipes = raw.map(normalizeRecipeJson);
+      const saved = [];
+      for (const r of recipes) {
+        const s = await db.saveRecipe(r);
+        saved.push(s);
+      }
+      state.recipes = [...saved, ...state.recipes];
+      state.modal = null;
+      rerender();
+      return;
+    }
+    const recipe = normalizeRecipeJson(raw);
     state.modal.draftRecipe = recipe;
     state.modal.step = 'vorm';
-    state.modal.busy = false;
     rerender();
   } catch (e) {
-    state.modal.busy = false;
-    state.modal.error = (e && e.message) || 'Kon het recept niet ophalen.';
-    rerender();
-  }
-}
-
-async function handleAnalyzePhoto() {
-  if (!state.modal.photoFile) { state.modal.error = 'Kies eerst een foto.'; rerender(); return; }
-  state.modal.busy = true; state.modal.error = '';
-  rerender();
-  try {
-    const base64 = await fileToResizedBase64(state.modal.photoFile);
-    const recipe = await ai.extractRecipeFromPhoto(base64);
-    state.modal.draftRecipe = recipe;
-    state.modal.step = 'vorm';
-    state.modal.busy = false;
-    rerender();
-  } catch (e) {
-    state.modal.busy = false;
-    state.modal.error = (e && e.message) || 'Kon het recept niet herkennen op de foto.';
+    state.modal.error = e instanceof SyntaxError
+      ? 'Dit is geen geldig JSON-bestand. Controleer of de AI alleen JSON heeft teruggegeven (geen extra tekst of ```json-markering).'
+      : ((e && e.message) || 'Kon het bestand niet verwerken.');
     rerender();
   }
 }
@@ -732,31 +701,6 @@ function renderPickResults() {
   return `<div class="grid">${list.map((r) => renderRecipeCard(r, state.pickerSortFridge ? fridgeMatchForRecipe(r, fridgeNames) : null, 'pick-recipe')).join('')}</div>`;
 }
 
-// ─────────────────────────────────────────── Modal: AI-instellingen
-function renderAiSettingsModal() {
-  const key = ai.getApiKey();
-  const masked = key ? key.slice(0, 8) + '••••••••' + key.slice(-4) : '';
-  return `
-    <div class="modal-backdrop">
-      <div class="modal-card narrow">
-        <div class="flex justify-between items-center mb-2">
-          <h2 class="display" style="font-size:18px;margin:0">AI-instellingen</h2>
-          <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
-        </div>
-        <p class="text-sm text-soft mb-3">Nodig voor "recept vanaf link/foto". Je Anthropic API-key wordt alleen lokaal in jouw browser bewaard, nooit in de GitHub-repo.</p>
-        ${key ? `<div class="banner banner-info">${icon('sparkles')}<span>Actieve key: <span class="mono">${masked}</span></span></div>` : ''}
-        <label class="field-label">Anthropic API-key</label>
-        <input id="api-key-input" class="input mb-3" type="password" placeholder="sk-ant-...">
-        <div class="flex gap-2 justify-between">
-          <button class="btn btn-outline" data-action="clear-api-key">Verwijderen</button>
-          <button class="btn btn-primary" data-action="save-api-key">Opslaan</button>
-        </div>
-        <p class="text-sm text-soft mt-4">Nog geen key? Maak er een op <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a>.</p>
-      </div>
-    </div>
-  `;
-}
-
 // ─────────────────────────────────────────── Bevestigingsdialoog
 function renderConfirmDialog(message) {
   return `
@@ -773,7 +717,6 @@ function renderConfirmDialog(message) {
 }
 
 function closeModal() {
-  if (state.modal && state.modal.photoPreviewUrl) URL.revokeObjectURL(state.modal.photoPreviewUrl);
   state.modal = null;
   rerender();
 }
@@ -799,7 +742,7 @@ async function handleAction(action, el) {
       break;
 
     case 'open-add':
-      state.modal = { type: 'add', step: 'kies', busy: false, error: '', photoFile: null, photoPreviewUrl: '', draftRecipe: null };
+      state.modal = { type: 'add', step: 'kies', error: '', info: '', fileName: '', draftRecipe: null };
       rerender();
       break;
 
@@ -825,11 +768,6 @@ async function handleAction(action, el) {
       rerender();
       break;
 
-    case 'open-ai-settings':
-      state.modal = { type: 'ai-settings' };
-      rerender();
-      break;
-
     case 'ai-method':
       state.modal.step = el.dataset.method === 'manual' ? 'manual' : el.dataset.method;
       state.modal.error = '';
@@ -839,26 +777,6 @@ async function handleAction(action, el) {
     case 'ai-back':
       state.modal.step = 'kies';
       state.modal.error = '';
-      rerender();
-      break;
-
-    case 'analyze-link':
-      await handleAnalyzeLink();
-      break;
-
-    case 'analyze-photo':
-      await handleAnalyzePhoto();
-      break;
-
-    case 'save-api-key': {
-      const input = document.getElementById('api-key-input');
-      ai.setApiKey(input.value);
-      closeModal();
-      break;
-    }
-
-    case 'clear-api-key':
-      ai.setApiKey('');
       rerender();
       break;
 
@@ -1001,17 +919,11 @@ function wireDynamicListeners() {
   const fridgeInput = document.getElementById('fridge-input');
   if (fridgeInput) fridgeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddFridgeItem(); } });
 
-  const urlInput = document.getElementById('ai-link-url');
-  if (urlInput) urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleAnalyzeLink(); } });
-
-  const photoInput = document.getElementById('ai-photo-input');
-  if (photoInput) photoInput.addEventListener('change', (e) => {
+  const jsonInput = document.getElementById('json-file-input');
+  if (jsonInput) jsonInput.addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    state.modal.photoFile = file;
-    state.modal.photoPreviewUrl = URL.createObjectURL(file);
-    state.modal.error = '';
-    rerender();
+    handleJsonFile(file);
   });
 
   const form = document.getElementById('recipe-form');
