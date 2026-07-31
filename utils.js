@@ -30,17 +30,20 @@ export function fridgeMatchForRecipe(recipe, fridgeItems) {
   return { matched, total, pct: Math.round((matched / total) * 100), missing };
 }
 
-// Bouwt de boodschappenlijst op basis van het weekmenu, geschaald naar het
-// aantal personen thuis, en markeert wat al in de koelkast staat.
-export function buildShoppingList(weekmenu, recipes, huishoudPersonen, fridgeItems) {
+// Bouwt de boodschappenlijst op basis van het weekmenu. Elke dag heeft zijn
+// eigen aantal personen (weekmenu[dag].personen); de hoeveelheden worden
+// per dag geschaald ten opzichte van het aantal personen waar het recept
+// oorspronkelijk voor bedoeld is. Markeert ook wat al in de koelkast staat.
+export function buildShoppingList(weekmenu, recipes, fridgeItems) {
   const byId = Object.fromEntries(recipes.map((r) => [r.id, r]));
   const agg = {};
   DAGEN.forEach((dag) => {
-    const recipeId = weekmenu[dag];
-    if (!recipeId) return;
-    const recipe = byId[recipeId];
+    const entry = weekmenu[dag];
+    if (!entry || !entry.recipeId) return;
+    const recipe = byId[entry.recipeId];
     if (!recipe) return;
-    const factor = recipe.personen > 0 ? huishoudPersonen / recipe.personen : 1;
+    const personen = entry.personen || recipe.personen;
+    const factor = recipe.personen > 0 ? personen / recipe.personen : 1;
     (recipe.ingredienten || []).forEach((ing) => {
       if (!ing.naam) return;
       const key = normName(ing.naam) + '|' + (ing.eenheid || '').toLowerCase().trim();

@@ -137,13 +137,29 @@ export async function fetchWeekmenu() {
   const { data, error } = await supabase.from('weekmenu').select('*');
   check(error);
   const map = {};
-  data.forEach((row) => { map[row.dag] = row.recipe_id; });
+  data.forEach((row) => {
+    map[row.dag] = row.recipe_id ? { recipeId: row.recipe_id, personen: row.personen || null } : null;
+  });
   return map;
 }
 
-export async function setWeekmenuDag(dag, recipeId) {
-  if (DEMO_MODE) { demoWeekmenu[dag] = recipeId; return; }
-  const { error } = await supabase.from('weekmenu').update({ recipe_id: recipeId }).eq('dag', dag);
+export async function setWeekmenuDag(dag, recipeId, personen) {
+  if (DEMO_MODE) {
+    demoWeekmenu[dag] = recipeId ? { recipeId, personen: personen || null } : null;
+    return;
+  }
+  const { error } = await supabase.from('weekmenu')
+    .update({ recipe_id: recipeId, personen: recipeId ? (personen || null) : null })
+    .eq('dag', dag);
+  check(error);
+}
+
+export async function setWeekmenuPersonen(dag, personen) {
+  if (DEMO_MODE) {
+    if (demoWeekmenu[dag]) demoWeekmenu[dag] = { ...demoWeekmenu[dag], personen };
+    return;
+  }
+  const { error } = await supabase.from('weekmenu').update({ personen }).eq('dag', dag);
   check(error);
 }
 
