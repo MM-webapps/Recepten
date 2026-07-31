@@ -23,8 +23,13 @@ create table if not exists recipes (
 -- ───────────────────────────────────────────── Weekmenu (1 rij per dag)
 create table if not exists weekmenu (
   dag        text primary key check (dag in ('Ma','Di','Wo','Do','Vr','Za','Zo')),
-  recipe_id  uuid references recipes(id) on delete set null
+  recipe_id  uuid references recipes(id) on delete set null,
+  personen   integer
 );
+
+-- Migratie: als je dit schema al eerder had gedraaid, voegt deze regel
+-- alleen de nieuwe kolom toe (bestaande data blijft ongemoeid).
+alter table weekmenu add column if not exists personen integer;
 
 insert into weekmenu (dag) values
   ('Ma'),('Di'),('Wo'),('Do'),('Vr'),('Za'),('Zo')
