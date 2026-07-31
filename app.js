@@ -296,7 +296,7 @@ function renderWeekmenu() {
         </div>
         <div class="flex items-center gap-3">
           <div class="flex items-center gap-2">
-            <span class="text-sm">Personen thuis</span>
+            <span class="text-sm">Standaard personen</span>
             <div class="stepper">
               <button data-action="huishoud-min">${icon('minus')}</button>
               <span class="mono">${state.instellingen.huishoud_personen}</span>
@@ -306,21 +306,31 @@ function renderWeekmenu() {
           <button class="btn btn-primary" data-action="go-shopping">${icon('shopping-cart')} Boodschappenlijst</button>
         </div>
       </div>
+      <p class="text-sm text-soft mt-4" style="margin-bottom:0">Dit is het aantal personen dat wordt ingevuld zodra je een dag invult — je kunt het per dag aanpassen, bijvoorbeeld als er gasten zijn.</p>
     </div>
     <div class="week-grid">${DAGEN.map((d) => renderWeekDay(d)).join('')}</div>
   `;
 }
 
 function renderWeekDay(dag) {
-  const recipeId = state.weekmenu[dag];
-  const recipe = recipeId ? getRecipe(recipeId) : null;
+  const entry = state.weekmenu[dag];
+  const recipe = entry ? getRecipe(entry.recipeId) : null;
+  const personen = entry ? (entry.personen || (recipe && recipe.personen) || 1) : null;
   return `
-    <div class="card" style="padding:12px;display:flex;flex-direction:column;min-height:170px">
+    <div class="card" style="padding:12px;display:flex;flex-direction:column;min-height:190px">
       <div class="mono text-soft" style="font-size:11px;font-weight:600;margin-bottom:8px">${DAG_NAMEN[dag]}</div>
       ${recipe ? `
         <div style="flex:1;display:flex;flex-direction:column">
           <div style="font-weight:600;font-size:13.5px;margin-bottom:8px;flex:1">${escapeHtml(recipe.titel)}</div>
           <div class="pills mb-2">${renderPill('basis', recipe.basis)}${renderPill('proteine', recipe.proteine)}</div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-sm text-soft">${icon('users')}</span>
+            <div class="stepper">
+              <button data-action="day-personen-min" data-day="${dag}">${icon('minus')}</button>
+              <span class="mono">${personen}</span>
+              <button data-action="day-personen-plus" data-day="${dag}">${icon('plus')}</button>
+            </div>
+          </div>
           <div class="flex gap-2">
             <button class="btn btn-outline btn-sm" style="flex:1" data-action="open-pick" data-day="${dag}">Wijzig</button>
             <button class="btn btn-outline btn-sm btn-icon" data-action="remove-day" data-day="${dag}">${icon('x')}</button>
@@ -369,7 +379,7 @@ function renderKoelkastResults() {
 // ─────────────────────────────────────────── Tab: Boodschappenlijst
 function renderBoodschappen() {
   const fridgeNames = state.fridge.map((f) => f.naam);
-  const list = buildShoppingList(state.weekmenu, state.recipes, state.instellingen.huishoud_personen, fridgeNames);
+  const list = buildShoppingList(state.weekmenu, state.recipes, fridgeNames);
   if (list.length === 0) {
     return renderEmptyState('shopping-cart', 'Je weekmenu is nog leeg. Plan eerst een paar dagen in.', { label: 'Naar weekmenu', action: 'go-weekmenu' });
   }
@@ -382,7 +392,7 @@ function renderBoodschappen() {
       <div class="flex justify-between items-center flex-wrap gap-3">
         <div>
           <h2 class="display" style="font-size:18px;margin:0 0 2px">Boodschappenlijst</h2>
-          <p class="text-sm text-soft" style="margin:0">${checkedCount} van ${list.length} afgevinkt · voor ${state.instellingen.huishoud_personen} personen</p>
+          <p class="text-sm text-soft" style="margin:0">${checkedCount} van ${list.length} afgevinkt</p>
         </div>
         <button class="btn btn-outline btn-sm" data-action="clear-checked">${icon('rotate-ccw')} Wis vinkjes</button>
       </div>
@@ -788,7 +798,7 @@ async function handleAction(action, el) {
         onConfirm: async () => {
           await db.deleteRecipe(recipe.id);
           state.recipes = state.recipes.filter((r) => r.id !== recipe.id);
-          DAGEN.forEach((d) => { if (state.weekmenu[d] === recipe.id) state.weekmenu[d] = null; });
+          DAGEN.forEach((d) => { if (state.weekmenu[d] && state.weekmenu[d].recipeId === recipe.id) state.weekmenu[d] = null; });
           state.confirm = null;
           state.modal = null;
           rerender();
@@ -816,8 +826,9 @@ async function handleAction(action, el) {
     case 'plan-from-detail': {
       const day = document.getElementById('plan-day-select').value;
       const recipeId = el.dataset.id;
-      await db.setWeekmenuDag(day, recipeId);
-      state.weekmenu[day] = recipeId;
+      const personen = state.instellingen.huishoud_personen;
+      await db.setWeekmenuDag(day, recipeId, personen);
+      state.weekmenu[day] = { recipeId, personen };
       state.modal = null;
       rerender();
       break;
@@ -826,9 +837,23 @@ async function handleAction(action, el) {
     case 'pick-recipe': {
       const day = state.modal.day;
       const recipeId = el.dataset.id;
-      await db.setWeekmenuDag(day, recipeId);
-      state.weekmenu[day] = recipeId;
+      const personen = state.instellingen.huishoud_personen;
+      await db.setWeekmenuDag(day, recipeId, personen);
+      state.weekmenu[day] = { recipeId, personen };
       state.modal = null;
+      rerender();
+      break;
+    }
+
+    case 'day-personen-min':
+    case 'day-personen-plus': {
+      const day = el.dataset.day;
+      const entry = state.weekmenu[day];
+      if (!entry) break;
+      const base = entry.personen || (getRecipe(entry.recipeId) || {}).personen || 1;
+      const next = Math.max(1, base + (action === 'day-personen-plus' ? 1 : -1));
+      state.weekmenu[day] = { ...entry, personen: next };
+      await db.setWeekmenuPersonen(day, next);
       rerender();
       break;
     }

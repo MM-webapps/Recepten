@@ -25,6 +25,11 @@ eigen recepten wilt gaan bewaren.
 2. Ga naar **SQL Editor → New query**, plak de inhoud van `schema.sql` en klik
    **Run**. Dit maakt de tabellen aan (`recipes`, `weekmenu`, `koelkast`,
    `instellingen`) inclusief de rijen voor de 7 dagen.
+
+   **Bij een update van `schema.sql` later:** het hele bestand opnieuw
+   plakken en runnen is altijd veilig — bestaande data blijft staan, en
+   nieuwe kolommen/tabellen worden alleen toegevoegd als ze nog niet
+   bestaan.
 3. Ga naar **Project Settings → API** en kopieer:
    - **Project URL**
    - **anon public key**
