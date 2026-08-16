@@ -53,6 +53,46 @@ create table if not exists instellingen (
 insert into instellingen (id) values (1)
 on conflict (id) do nothing;
 
+-- ───────────────────────────────────────────── Kenmerk-opties (basis/proteine/keuken)
+-- Vervangt de eerder hardgecodeerde lijstjes: nu beheerbaar vanuit de app.
+create table if not exists kenmerk_opties (
+  id         uuid primary key default gen_random_uuid(),
+  categorie  text not null check (categorie in ('basis','proteine','keuken')),
+  naam       text not null,
+  volgorde   integer not null default 0,
+  unique (categorie, naam)
+);
+
+insert into kenmerk_opties (categorie, naam, volgorde) values
+  ('basis','Aardappel',1), ('basis','Pasta',2), ('basis','Rijst',3), ('basis','Wraps/Tortilla',4),
+  ('basis','Brood',5), ('basis','Peulvruchten',6), ('basis','Noedels',7), ('basis','Couscous/Bulgur',8), ('basis','Overig',9),
+  ('proteine','Kip',1), ('proteine','Rundvlees',2), ('proteine','Gehakt',3), ('proteine','Varkensvlees',4),
+  ('proteine','Vis/Zeevruchten',5), ('proteine','Ei',6), ('proteine','Tofu/Peulvruchten',7), ('proteine','Vegetarisch overig',8), ('proteine','Geen',9),
+  ('keuken','Nederlands',1), ('keuken','Italiaans',2), ('keuken','Mediterraans',3), ('keuken','Aziatisch',4),
+  ('keuken','Mexicaans',5), ('keuken','Indiaas',6), ('keuken','Midden-Oosters',7), ('keuken','Overig',8)
+on conflict (categorie, naam) do nothing;
+
+-- ───────────────────────────────────────────── Tags (bv. "grote groepen")
+create table if not exists tags (
+  id    uuid primary key default gen_random_uuid(),
+  naam  text not null unique
+);
+
+create table if not exists recipe_tags (
+  recipe_id  uuid not null references recipes(id) on delete cascade,
+  tag_id     uuid not null references tags(id) on delete cascade,
+  primary key (recipe_id, tag_id)
+);
+
+-- ───────────────────────────────────────────── Opmerkingen-log per recept
+create table if not exists notities (
+  id          uuid primary key default gen_random_uuid(),
+  recipe_id   uuid not null references recipes(id) on delete cascade,
+  tekst       text not null,
+  datum       date not null default current_date,
+  aangemaakt  timestamptz not null default now()
+);
+
 -- ───────────────────────────────────────────── Row Level Security
 -- Geen login gekozen → open policies, zodat de site met alleen de
 -- anon-key kan lezen/schrijven. Zie README.md voor het beveiligingsaspect.
@@ -61,6 +101,10 @@ alter table recipes enable row level security;
 alter table weekmenu enable row level security;
 alter table koelkast enable row level security;
 alter table instellingen enable row level security;
+alter table kenmerk_opties enable row level security;
+alter table tags enable row level security;
+alter table recipe_tags enable row level security;
+alter table notities enable row level security;
 
 drop policy if exists "recipes_open" on recipes;
 create policy "recipes_open" on recipes for all using (true) with check (true);
@@ -73,3 +117,15 @@ create policy "koelkast_open" on koelkast for all using (true) with check (true)
 
 drop policy if exists "instellingen_open" on instellingen;
 create policy "instellingen_open" on instellingen for all using (true) with check (true);
+
+drop policy if exists "kenmerk_opties_open" on kenmerk_opties;
+create policy "kenmerk_opties_open" on kenmerk_opties for all using (true) with check (true);
+
+drop policy if exists "tags_open" on tags;
+create policy "tags_open" on tags for all using (true) with check (true);
+
+drop policy if exists "recipe_tags_open" on recipe_tags;
+create policy "recipe_tags_open" on recipe_tags for all using (true) with check (true);
+
+drop policy if exists "notities_open" on notities;
+create policy "notities_open" on notities for all using (true) with check (true);
