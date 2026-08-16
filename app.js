@@ -159,7 +159,7 @@ function renderHeaderNav() {
   return `
     <div class="header">
       <div class="wrap header-top">
-        <div class="brand">${icon('chef-hat')}<span class="display">Receptenkist</span></div>
+        <div class="brand">${icon('chef-hat')}<span class="display">MMenu-Planner</span></div>
         <div class="flex gap-2">
           <button class="btn btn-outline btn-sm" data-action="open-manage">${icon('settings')} Beheren</button>
           <button class="btn btn-primary btn-sm" data-action="open-add">${icon('plus')} Nieuw recept</button>
