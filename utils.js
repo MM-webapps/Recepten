@@ -1,5 +1,5 @@
 // Kleine hulpfuncties, gebruikt door app.js.
-import { DAGEN, BASIS_OPTIONS, PROTEINE_OPTIONS, KEUKEN_OPTIONS } from './constants.js';
+import { DAGEN } from './constants.js';
 
 export function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({
@@ -83,9 +83,10 @@ export function downloadJSON(obj, filename) {
 }
 
 // Zet een (los) JSON-object om naar een geldig recept-object voor het
-// formulier: dwingt kenmerken af tot een geldige optie, vult ontbrekende
-// velden met redelijke standaardwaarden, en negeert onbruikbare regels.
-export function normalizeRecipeJson(raw) {
+// formulier: dwingt kenmerken af tot een geldige optie uit de huidige
+// (beheerde) lijsten, vult ontbrekende velden met redelijke
+// standaardwaarden, en negeert onbruikbare regels.
+export function normalizeRecipeJson(raw, basisOptions, proteineOptions, keukenOptions) {
   raw = raw || {};
   const pick = (val, options, fallback) => {
     if (!val) return fallback;
@@ -94,9 +95,9 @@ export function normalizeRecipeJson(raw) {
   };
   return {
     titel: raw.titel ? String(raw.titel).trim() : 'Naamloos recept',
-    basis: pick(raw.basis, BASIS_OPTIONS, 'Overig'),
-    proteine: pick(raw.proteine, PROTEINE_OPTIONS, 'Geen'),
-    keuken: pick(raw.keuken, KEUKEN_OPTIONS, 'Overig'),
+    basis: pick(raw.basis, basisOptions, basisOptions[basisOptions.length - 1]),
+    proteine: pick(raw.proteine, proteineOptions, proteineOptions[proteineOptions.length - 1]),
+    keuken: pick(raw.keuken, keukenOptions, keukenOptions[keukenOptions.length - 1]),
     personen: Number(raw.personen) > 0 ? Math.round(Number(raw.personen)) : 4,
     bereidingstijd: Number(raw.bereidingstijd) > 0 ? Math.round(Number(raw.bereidingstijd)) : 30,
     ingredienten: Array.isArray(raw.ingredienten)
@@ -112,6 +113,15 @@ export function normalizeRecipeJson(raw) {
     instructies: Array.isArray(raw.instructies) ? raw.instructies.map((s) => String(s).trim()).filter(Boolean) : [],
     bron: raw.bron ? String(raw.bron).trim() : ''
   };
+}
+
+// Formatteert een ISO-datum (YYYY-MM-DD) als DD-M-YYYY, zoals in het
+// opmerkingen-log.
+export function formatDatumNL(isoDatum) {
+  if (!isoDatum) return '';
+  const [y, m, d] = isoDatum.split('-');
+  if (!y || !m || !d) return isoDatum;
+  return `${Number(d)}-${Number(m)}-${y}`;
 }
 
 export function slugify(str) {

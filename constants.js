@@ -1,16 +1,19 @@
-// Gedeelde constanten: kenmerk-opties, dagen, en de kleur/iconenstijl per kenmerk.
+// Gedeelde constanten: dagen, en de kleur/iconenstijl per kenmerk.
+// De kenmerk-opties (basis/proteine/keuken) en tags komen nu uit de database
+// en zijn vanuit de app te beheren — deze lijstjes hieronder worden alleen
+// gebruikt als startwaarden voor de demo-modus (zie db.js).
 
-export const BASIS_OPTIONS = [
+export const DEFAULT_BASIS_OPTIONS = [
   'Aardappel', 'Pasta', 'Rijst', 'Wraps/Tortilla', 'Brood',
   'Peulvruchten', 'Noedels', 'Couscous/Bulgur', 'Overig'
 ];
 
-export const PROTEINE_OPTIONS = [
+export const DEFAULT_PROTEINE_OPTIONS = [
   'Kip', 'Rundvlees', 'Gehakt', 'Varkensvlees', 'Vis/Zeevruchten',
   'Ei', 'Tofu/Peulvruchten', 'Vegetarisch overig', 'Geen'
 ];
 
-export const KEUKEN_OPTIONS = [
+export const DEFAULT_KEUKEN_OPTIONS = [
   'Nederlands', 'Italiaans', 'Mediterraans', 'Aziatisch',
   'Mexicaans', 'Indiaas', 'Midden-Oosters', 'Overig'
 ];

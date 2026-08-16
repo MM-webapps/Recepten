@@ -107,6 +107,7 @@ main { padding: 24px 0 80px; }
 .btn-danger:hover { background: var(--brick-dark); }
 .btn-icon { padding: 8px; }
 .btn-sm { padding: 6px 10px; font-size: 12.5px; }
+.btn-icon.btn-sm { padding: 6px; }
 .btn-block { width: 100%; justify-content: center; }
 
 /* ── Forms ──────────────────────────────────────────── */
@@ -158,6 +159,16 @@ textarea.input { resize: vertical; }
 }
 .tag-chip button { background: none; border: none; display: flex; color: var(--ink-soft); padding: 2px; }
 .tag-chip button:hover { color: var(--brick); }
+.tag-chip-sm {
+  display: inline-flex;
+  align-items: center;
+  background: var(--chip-bg);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 500;
+}
 
 /* ── Grids ──────────────────────────────────────────── */
 .grid { display: grid; gap: 16px; grid-template-columns: 1fr; }

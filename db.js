@@ -7,6 +7,7 @@
 // bij een herlaad van de pagina).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import { DEFAULT_BASIS_OPTIONS, DEFAULT_PROTEINE_OPTIONS, DEFAULT_KEUKEN_OPTIONS } from './constants.js';
 
 export const DEMO_MODE =
   !SUPABASE_URL || SUPABASE_URL.includes('JOUW-PROJECT') ||
@@ -20,6 +21,10 @@ function check(error) {
 
 function uuid() {
   return (crypto.randomUUID && crypto.randomUUID()) || ('demo-' + Math.random().toString(36).slice(2));
+}
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 // ─────────────────────────────── Demo-data (alleen gebruikt in demo-modus)
@@ -100,33 +105,73 @@ let demoWeekmenu = { Ma: null, Di: null, Wo: null, Do: null, Vr: null, Za: null,
 let demoKoelkast = [];
 let demoInstellingen = { id: 1, huishoud_personen: 2, boodschappen_vinkjes: {} };
 
+let demoKenmerkOpties = [
+  ...DEFAULT_BASIS_OPTIONS.map((naam, i) => ({ id: uuid(), categorie: 'basis', naam, volgorde: i + 1 })),
+  ...DEFAULT_PROTEINE_OPTIONS.map((naam, i) => ({ id: uuid(), categorie: 'proteine', naam, volgorde: i + 1 })),
+  ...DEFAULT_KEUKEN_OPTIONS.map((naam, i) => ({ id: uuid(), categorie: 'keuken', naam, volgorde: i + 1 }))
+];
+
+let demoTags = [
+  { id: uuid(), naam: 'Grote groepen' },
+  { id: uuid(), naam: 'Snel klaar' }
+];
+let demoRecipeTagIds = {}; // { [recipeId]: [tagId, ...] }
+let demoNotities = {}; // { [recipeId]: [{id, tekst, datum, aangemaakt}, ...] }
+
+function demoTagsFor(recipeId) {
+  return (demoRecipeTagIds[recipeId] || []).map((tid) => demoTags.find((t) => t.id === tid)).filter(Boolean);
+}
+
 // ─────────────────────────────── Recepten
 export async function fetchRecipes() {
-  if (DEMO_MODE) return demoRecipes.slice().sort((a, b) => new Date(b.aangemaakt) - new Date(a.aangemaakt));
-  const { data, error } = await supabase.from('recipes').select('*').order('aangemaakt', { ascending: false });
+  if (DEMO_MODE) {
+    return demoRecipes
+      .slice()
+      .sort((a, b) => new Date(b.aangemaakt) - new Date(a.aangemaakt))
+      .map((r) => ({ ...r, tags: demoTagsFor(r.id) }));
+  }
+  const { data, error } = await supabase
+    .from('recipes')
+    .select('*, recipe_tags(tags(id, naam))')
+    .order('aangemaakt', { ascending: false });
   check(error);
-  return data;
+  return data.map((row) => {
+    const { recipe_tags, ...rest } = row;
+    return { ...rest, tags: (recipe_tags || []).map((rt) => rt.tags).filter(Boolean) };
+  });
 }
 
 export async function saveRecipe(recipe) {
+  const { tagIds, tags, ...fields } = recipe;
   if (DEMO_MODE) {
-    if (recipe.id) {
-      demoRecipes = demoRecipes.map((r) => (r.id === recipe.id ? { ...recipe } : r));
-      return demoRecipes.find((r) => r.id === recipe.id);
+    let saved;
+    if (fields.id) {
+      demoRecipes = demoRecipes.map((r) => (r.id === fields.id ? { ...r, ...fields } : r));
+      saved = demoRecipes.find((r) => r.id === fields.id);
+    } else {
+      saved = { ...fields, id: uuid(), aangemaakt: new Date().toISOString() };
+      demoRecipes = [saved, ...demoRecipes];
     }
-    const saved = { ...recipe, id: uuid(), aangemaakt: new Date().toISOString() };
-    demoRecipes = [saved, ...demoRecipes];
-    return saved;
+    if (tagIds) demoRecipeTagIds[saved.id] = tagIds;
+    return { ...saved, tags: demoTagsFor(saved.id) };
   }
-  const payload = { ...recipe };
+  const payload = { ...fields };
   if (!payload.id) delete payload.id;
   const { data, error } = await supabase.from('recipes').upsert(payload, { onConflict: 'id' }).select().single();
   check(error);
-  return data;
+  if (tagIds) await setRecipeTags(data.id, tagIds);
+  const { data: rtData, error: rtErr } = await supabase.from('recipe_tags').select('tags(id, naam)').eq('recipe_id', data.id);
+  check(rtErr);
+  return { ...data, tags: (rtData || []).map((r) => r.tags).filter(Boolean) };
 }
 
 export async function deleteRecipe(id) {
-  if (DEMO_MODE) { demoRecipes = demoRecipes.filter((r) => r.id !== id); return; }
+  if (DEMO_MODE) {
+    demoRecipes = demoRecipes.filter((r) => r.id !== id);
+    delete demoRecipeTagIds[id];
+    delete demoNotities[id];
+    return;
+  }
   const { error } = await supabase.from('recipes').delete().eq('id', id);
   check(error);
 }
@@ -201,4 +246,136 @@ export async function updateInstellingen(patch) {
   const { data, error } = await supabase.from('instellingen').update(patch).eq('id', 1).select().single();
   check(error);
   return data;
+}
+
+// ─────────────────────────────── Kenmerk-opties (basis / proteine / keuken)
+export async function fetchKenmerkOpties() {
+  if (DEMO_MODE) {
+    return demoKenmerkOpties.slice().sort((a, b) => a.volgorde - b.volgorde || a.naam.localeCompare(b.naam));
+  }
+  const { data, error } = await supabase.from('kenmerk_opties').select('*').order('categorie').order('volgorde').order('naam');
+  check(error);
+  return data;
+}
+
+export async function addKenmerkOptie(categorie, naam) {
+  if (DEMO_MODE) {
+    const volgorde = demoKenmerkOpties.filter((k) => k.categorie === categorie).length + 1;
+    const row = { id: uuid(), categorie, naam, volgorde };
+    demoKenmerkOpties.push(row);
+    return row;
+  }
+  const { data, error } = await supabase.from('kenmerk_opties').insert({ categorie, naam }).select().single();
+  check(error);
+  return data;
+}
+
+// Hernoemen werkt door naar bestaande recepten: elk recept dat de oude
+// waarde gebruikte, krijgt automatisch de nieuwe naam.
+export async function renameKenmerkOptie(id, categorie, oudeNaam, nieuweNaam) {
+  if (DEMO_MODE) {
+    demoKenmerkOpties = demoKenmerkOpties.map((k) => (k.id === id ? { ...k, naam: nieuweNaam } : k));
+    demoRecipes = demoRecipes.map((r) => (r[categorie] === oudeNaam ? { ...r, [categorie]: nieuweNaam } : r));
+    return;
+  }
+  const { error } = await supabase.from('kenmerk_opties').update({ naam: nieuweNaam }).eq('id', id);
+  check(error);
+  const { error: err2 } = await supabase.from('recipes').update({ [categorie]: nieuweNaam }).eq(categorie, oudeNaam);
+  check(err2);
+}
+
+// Verwijderen mag alleen als geen enkel recept deze waarde nog gebruikt,
+// zodat recepten nooit stilzwijgend een ongeldig kenmerk overhouden.
+export async function deleteKenmerkOptie(id, categorie, naam) {
+  if (DEMO_MODE) {
+    const inUse = demoRecipes.some((r) => r[categorie] === naam);
+    if (inUse) throw new Error(`Kan "${naam}" niet verwijderen: nog in gebruik bij een of meer recepten.`);
+    demoKenmerkOpties = demoKenmerkOpties.filter((k) => k.id !== id);
+    return;
+  }
+  const { count, error: cErr } = await supabase.from('recipes').select('id', { count: 'exact', head: true }).eq(categorie, naam);
+  check(cErr);
+  if (count && count > 0) throw new Error(`Kan "${naam}" niet verwijderen: nog in gebruik bij ${count} recept(en).`);
+  const { error } = await supabase.from('kenmerk_opties').delete().eq('id', id);
+  check(error);
+}
+
+// ─────────────────────────────── Tags
+export async function fetchTags() {
+  if (DEMO_MODE) return demoTags.slice().sort((a, b) => a.naam.localeCompare(b.naam));
+  const { data, error } = await supabase.from('tags').select('*').order('naam');
+  check(error);
+  return data;
+}
+
+export async function addTag(naam) {
+  if (DEMO_MODE) {
+    const row = { id: uuid(), naam };
+    demoTags.push(row);
+    return row;
+  }
+  const { data, error } = await supabase.from('tags').insert({ naam }).select().single();
+  check(error);
+  return data;
+}
+
+export async function renameTag(id, naam) {
+  if (DEMO_MODE) { demoTags = demoTags.map((t) => (t.id === id ? { ...t, naam } : t)); return; }
+  const { error } = await supabase.from('tags').update({ naam }).eq('id', id);
+  check(error);
+}
+
+export async function deleteTag(id) {
+  if (DEMO_MODE) {
+    demoTags = demoTags.filter((t) => t.id !== id);
+    Object.keys(demoRecipeTagIds).forEach((rid) => {
+      demoRecipeTagIds[rid] = demoRecipeTagIds[rid].filter((tid) => tid !== id);
+    });
+    return;
+  }
+  const { error } = await supabase.from('tags').delete().eq('id', id);
+  check(error);
+}
+
+export async function setRecipeTags(recipeId, tagIds) {
+  if (DEMO_MODE) { demoRecipeTagIds[recipeId] = tagIds; return; }
+  const { error: delErr } = await supabase.from('recipe_tags').delete().eq('recipe_id', recipeId);
+  check(delErr);
+  if (tagIds.length) {
+    const { error: insErr } = await supabase.from('recipe_tags').insert(tagIds.map((tagId) => ({ recipe_id: recipeId, tag_id: tagId })));
+    check(insErr);
+  }
+}
+
+// ─────────────────────────────── Opmerkingen-log per recept
+export async function fetchNotities(recipeId) {
+  if (DEMO_MODE) {
+    return (demoNotities[recipeId] || []).slice().sort((a, b) => (b.datum + b.aangemaakt).localeCompare(a.datum + a.aangemaakt));
+  }
+  const { data, error } = await supabase.from('notities').select('*').eq('recipe_id', recipeId)
+    .order('datum', { ascending: false }).order('aangemaakt', { ascending: false });
+  check(error);
+  return data;
+}
+
+export async function addNotitie(recipeId, tekst, datum) {
+  if (DEMO_MODE) {
+    const row = { id: uuid(), recipe_id: recipeId, tekst, datum: datum || todayISO(), aangemaakt: new Date().toISOString() };
+    demoNotities[recipeId] = [row, ...(demoNotities[recipeId] || [])];
+    return row;
+  }
+  const payload = { recipe_id: recipeId, tekst };
+  if (datum) payload.datum = datum;
+  const { data, error } = await supabase.from('notities').insert(payload).select().single();
+  check(error);
+  return data;
+}
+
+export async function deleteNotitie(id, recipeId) {
+  if (DEMO_MODE) {
+    demoNotities[recipeId] = (demoNotities[recipeId] || []).filter((n) => n.id !== id);
+    return;
+  }
+  const { error } = await supabase.from('notities').delete().eq('id', id);
+  check(error);
 }

@@ -30,9 +30,12 @@ eigen recepten wilt gaan bewaren.
    plakken en runnen is altijd veilig — bestaande data blijft staan, en
    nieuwe kolommen/tabellen worden alleen toegevoegd als ze nog niet
    bestaan.
-3. Ga naar **Project Settings → API** en kopieer:
-   - **Project URL**
-   - **anon public key**
+3. Ga naar **Project Settings → API Keys** en kopieer:
+   - **Project URL** (zonder `/rest/v1/` of `/` erachter)
+   - een key om te gebruiken: ofwel de **anon public** key (tabblad
+     "Legacy API Keys", begint met `eyJhbGci...`), ofwel de nieuwere
+     **publishable** key (tabblad "API Keys", begint met
+     `sb_publishable_...`) — beide werken prima.
 4. Open `config.js` in dit project en vul beide in:
    ```js
    export const SUPABASE_URL = 'https://xxxxxxxx.supabase.co';
@@ -79,7 +82,29 @@ In de app, via **Nieuw recept**, kies je tussen:
   Je kunt ook een JSON-*array* met meerdere recepten in één keer uploaden;
   die worden dan direct allemaal geïmporteerd (zonder controlestap).
 
-## Beveiliging — belangrijk om te weten
+## 5. Nieuw: opmerkingen, tags en beheerbare kenmerken
+
+- **Opmerkingen-log per recept:** open een recept → onderaan bij "Opmerkingen"
+  kun je een tekst met datum toevoegen. Elke opmerking blijft staan (met
+  datum), zo ontstaat een log per recept.
+- **Tags:** vrij toe te voegen labels (bv. "Grote groepen", "Snel klaar").
+  Toevoegen kan direct in het receptformulier ("+ Toevoegen" bij Tags), of
+  via **Beheren** (rechtsboven) → tabblad Tags. Filteren op tag kan in de
+  filterbalk bij Recepten.
+- **Basis / Proteïne / Keuken beheren:** deze opties staan niet meer vast in
+  de code, maar in Supabase, en zijn te beheren via **Beheren** (rechtsboven
+  in de app). Hernoemen werkt automatisch door naar alle recepten die die
+  waarde gebruiken; verwijderen kan alleen als geen enkel recept de waarde
+  nog gebruikt.
+
+**Voor deze update moet je `schema.sql` opnieuw draaien in Supabase** (SQL
+Editor → plak het hele bestand → Run). Dit voegt drie nieuwe tabellen toe
+(`kenmerk_opties`, `tags`, `recipe_tags`, `notities`) en vult
+`kenmerk_opties` met de bestaande basis/proteïne/keuken-waarden, zodat je
+niets kwijtraakt. Bestaande recepten, weekmenu's en koelkastinhoud blijven
+ongewijzigd.
+
+
 
 Je hebt gekozen voor **geen login**. Dat betekent:
 
@@ -102,7 +127,7 @@ Je hebt gekozen voor **geen login**. Dat betekent:
 | `style.css`      | Vormgeving                                                     |
 | `config.js`      | **Hier vul je je Supabase-gegevens in**                        |
 | `db.js`          | Alle Supabase-lees/schrijffuncties (met ingebouwde demo-modus)  |
-| `constants.js`   | Kenmerk-opties (basis/proteïne/keuken), dagen, kleuren          |
+| `constants.js`   | Dagen, kleuren/iconen per kenmerk (de opties zelf staan in Supabase) |
 | `utils.js`       | Hulpfuncties: matching, boodschappenlijst, JSON-validatie       |
 | `app.js`         | De applicatie zelf: state, rendering, events                    |
 | `schema.sql`      | Het hele Supabase-schema, in één keer te runnen                |

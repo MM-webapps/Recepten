@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { DEMO_MODE } from './db.js';
-import { BASIS_OPTIONS, PROTEINE_OPTIONS, KEUKEN_OPTIONS, DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
-import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson } from './utils.js';
+import { DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
+import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL } from './utils.js';
 
 const state = {
   loaded: false,
@@ -9,14 +9,22 @@ const state = {
   weekmenu: { Ma: null, Di: null, Wo: null, Do: null, Vr: null, Za: null, Zo: null },
   fridge: [],
   instellingen: { huishoud_personen: 2, boodschappen_vinkjes: {} },
+  kenmerkOpties: { basis: [], proteine: [], keuken: [] },
+  tags: [],
   activeTab: 'recepten',
-  filters: { basis: '', proteine: '', keuken: '', maxTijd: '', zoek: '' },
+  filters: { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' },
   pickerSortFridge: false,
   viewPersonen: null,
   planDay: null,
+  viewNotities: [],
+  notitiesLoading: false,
   modal: null,
   confirm: null
 };
+
+function basisNamen() { return state.kenmerkOpties.basis.map((o) => o.naam); }
+function proteineNamen() { return state.kenmerkOpties.proteine.map((o) => o.naam); }
+function keukenNamen() { return state.kenmerkOpties.keuken.map((o) => o.naam); }
 
 const root = document.getElementById('app');
 const modalRoot = document.getElementById('modal-root');
@@ -36,13 +44,20 @@ async function init() {
   root.innerHTML = renderLoading();
   hydrateIcons();
   try {
-    const [recipes, weekmenu, fridge, instellingen] = await Promise.all([
-      db.fetchRecipes(), db.fetchWeekmenu(), db.fetchKoelkast(), db.fetchInstellingen()
+    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags] = await Promise.all([
+      db.fetchRecipes(), db.fetchWeekmenu(), db.fetchKoelkast(), db.fetchInstellingen(),
+      db.fetchKenmerkOpties(), db.fetchTags()
     ]);
     state.recipes = recipes;
     state.weekmenu = weekmenu;
     state.fridge = fridge;
     state.instellingen = instellingen;
+    state.kenmerkOpties = {
+      basis: kenmerkOptiesRaw.filter((o) => o.categorie === 'basis'),
+      proteine: kenmerkOptiesRaw.filter((o) => o.categorie === 'proteine'),
+      keuken: kenmerkOptiesRaw.filter((o) => o.categorie === 'keuken')
+    };
+    state.tags = tags;
     state.loaded = true;
     rerender();
   } catch (e) {
@@ -123,6 +138,7 @@ function renderModalRoot() {
     else if (state.modal.type === 'view') html += renderViewModal(getRecipe(state.modal.id));
     else if (state.modal.type === 'edit') html += renderEditModal(getRecipe(state.modal.id));
     else if (state.modal.type === 'pick') html += renderPickModal(state.modal.day);
+    else if (state.modal.type === 'manage') html += renderManageModal();
   }
   if (state.confirm) html += renderConfirmDialog(state.confirm.message);
   return html;
@@ -143,8 +159,9 @@ function renderHeaderNav() {
   return `
     <div class="header">
       <div class="wrap header-top">
-        <div class="brand">${icon('chef-hat')}<span class="display">MMenu-Planner</span></div>
+        <div class="brand">${icon('chef-hat')}<span class="display">Receptenkist</span></div>
         <div class="flex gap-2">
+          <button class="btn btn-outline btn-sm" data-action="open-manage">${icon('settings')} Beheren</button>
           <button class="btn btn-primary btn-sm" data-action="open-add">${icon('plus')} Nieuw recept</button>
         </div>
       </div>
@@ -166,12 +183,14 @@ function renderPill(field, value) {
 }
 
 function renderRecipeCard(recipe, matchInfo, action) {
+  const tags = recipe.tags || [];
   return `
     <div class="card recipe-card" data-action="${action || 'open-view'}" data-id="${recipe.id}">
       <h3 class="display">${escapeHtml(recipe.titel)}</h3>
       <div class="pills">
         ${renderPill('basis', recipe.basis)}${renderPill('proteine', recipe.proteine)}${renderPill('keuken', recipe.keuken)}
       </div>
+      ${tags.length ? `<div class="pills mb-2">${tags.map((t) => `<span class="tag-chip-sm">${escapeHtml(t.naam)}</span>`).join('')}</div>` : ''}
       <div class="recipe-meta mono">
         <span>${icon('clock')}${recipe.bereidingstijd} min</span>
         <span>${icon('users')}${recipe.personen}p</span>
@@ -206,16 +225,17 @@ function optionListHtml(options, value) {
 
 function renderFilterBarInner(showSortFridge) {
   const f = state.filters;
-  const active = f.basis || f.proteine || f.keuken || f.maxTijd || f.zoek;
+  const active = f.basis || f.proteine || f.keuken || f.tag || f.maxTijd || f.zoek;
   return `
     <div class="card flex flex-wrap items-end gap-3" style="padding:14px">
       <div style="flex:1;min-width:160px">
         <label class="field-label">Zoeken</label>
         <input class="input" name="f-zoek" placeholder="Titel of ingrediënt..." value="${escapeHtml(f.zoek)}">
       </div>
-      <div><label class="field-label">Basis</label><select class="input" name="f-basis">${optionListHtml(BASIS_OPTIONS, f.basis)}</select></div>
-      <div><label class="field-label">Proteïne</label><select class="input" name="f-proteine">${optionListHtml(PROTEINE_OPTIONS, f.proteine)}</select></div>
-      <div><label class="field-label">Keuken</label><select class="input" name="f-keuken">${optionListHtml(KEUKEN_OPTIONS, f.keuken)}</select></div>
+      <div><label class="field-label">Basis</label><select class="input" name="f-basis">${optionListHtml(basisNamen(), f.basis)}</select></div>
+      <div><label class="field-label">Proteïne</label><select class="input" name="f-proteine">${optionListHtml(proteineNamen(), f.proteine)}</select></div>
+      <div><label class="field-label">Keuken</label><select class="input" name="f-keuken">${optionListHtml(keukenNamen(), f.keuken)}</select></div>
+      <div><label class="field-label">Tag</label><select class="input" name="f-tag">${optionListHtml(state.tags.map((t) => t.naam), f.tag)}</select></div>
       <div style="width:110px"><label class="field-label">Max. tijd</label><input class="input" type="number" min="0" name="f-maxtijd" placeholder="min" value="${escapeHtml(f.maxTijd)}"></div>
       ${showSortFridge ? `<label class="flex items-center gap-2 text-sm" style="padding-bottom:9px"><input type="checkbox" name="f-sortfridge" ${state.pickerSortFridge ? 'checked' : ''}> Sorteer op koelkastmatch</label>` : ''}
       ${active ? `<button type="button" class="btn btn-outline btn-sm" data-action="clear-filters">${icon('x')} Wis filters</button>` : ''}
@@ -228,6 +248,7 @@ function filterRecipes(recipes, filters) {
     if (filters.basis && r.basis !== filters.basis) return false;
     if (filters.proteine && r.proteine !== filters.proteine) return false;
     if (filters.keuken && r.keuken !== filters.keuken) return false;
+    if (filters.tag && !(r.tags || []).some((t) => t.naam === filters.tag)) return false;
     if (filters.maxTijd && r.bereidingstijd > Number(filters.maxTijd)) return false;
     if (filters.zoek) {
       const q = filters.zoek.toLowerCase();
@@ -257,6 +278,7 @@ function wireFilterBar(barId, resultsId, renderResultsFn) {
   const basis = bar.querySelector('[name="f-basis"]');
   const proteine = bar.querySelector('[name="f-proteine"]');
   const keuken = bar.querySelector('[name="f-keuken"]');
+  const tag = bar.querySelector('[name="f-tag"]');
   const maxTijd = bar.querySelector('[name="f-maxtijd"]');
   const sortFridge = bar.querySelector('[name="f-sortfridge"]');
   if (zoek) zoek.addEventListener('input', () => { state.filters.zoek = zoek.value; refresh(); });
@@ -264,6 +286,7 @@ function wireFilterBar(barId, resultsId, renderResultsFn) {
   if (basis) basis.addEventListener('change', () => { state.filters.basis = basis.value; rebuildBar(hasSortFridge); });
   if (proteine) proteine.addEventListener('change', () => { state.filters.proteine = proteine.value; rebuildBar(hasSortFridge); });
   if (keuken) keuken.addEventListener('change', () => { state.filters.keuken = keuken.value; rebuildBar(hasSortFridge); });
+  if (tag) tag.addEventListener('change', () => { state.filters.tag = tag.value; rebuildBar(hasSortFridge); });
   if (sortFridge) sortFridge.addEventListener('change', () => { state.pickerSortFridge = sortFridge.checked; rebuildBar(hasSortFridge); });
 }
 
@@ -441,6 +464,17 @@ function selectFieldHtml(label, name, options, value) {
   `;
 }
 
+function tagCheckboxesHtml(selectedIds) {
+  selectedIds = selectedIds || [];
+  if (state.tags.length === 0) return `<span class="text-sm text-soft">Nog geen tags — maak er hieronder één aan.</span>`;
+  return state.tags.map((t) => `
+    <label class="tag-chip" style="cursor:pointer">
+      <input type="checkbox" name="tagIds" value="${t.id}" ${selectedIds.includes(t.id) ? 'checked' : ''} style="margin:0">
+      ${escapeHtml(t.naam)}
+    </label>
+  `).join('');
+}
+
 function renderRecipeFormFields(initialRecipe, opts) {
   opts = opts || {};
   const r = initialRecipe || {};
@@ -459,9 +493,9 @@ function renderRecipeFormFields(initialRecipe, opts) {
         <input class="input" name="titel" value="${escapeHtml(r.titel || '')}" placeholder="Bijv. Kip-kerrie met rijst" required>
       </div>
       <div class="grid mb-3">
-        ${selectFieldHtml('Basis', 'basis', BASIS_OPTIONS, r.basis)}
-        ${selectFieldHtml('Proteïne', 'proteine', PROTEINE_OPTIONS, r.proteine)}
-        ${selectFieldHtml('Keuken', 'keuken', KEUKEN_OPTIONS, r.keuken)}
+        ${selectFieldHtml('Basis', 'basis', basisNamen(), r.basis)}
+        ${selectFieldHtml('Proteïne', 'proteine', proteineNamen(), r.proteine)}
+        ${selectFieldHtml('Keuken', 'keuken', keukenNamen(), r.keuken)}
         <div class="field-row">
           <div style="flex:1">
             <label class="field-label">Personen</label>
@@ -471,6 +505,14 @@ function renderRecipeFormFields(initialRecipe, opts) {
             <label class="field-label">Bereidingstijd (min)</label>
             <input class="input" type="number" min="0" name="bereidingstijd" value="${r.bereidingstijd || 30}">
           </div>
+        </div>
+      </div>
+      <div class="mb-4">
+        <label class="field-label">Tags</label>
+        <div id="form-tags" class="flex flex-wrap gap-2 mb-2">${tagCheckboxesHtml((r.tags || []).map((t) => t.id))}</div>
+        <div class="flex gap-2">
+          <input id="form-new-tag" class="input" style="flex:1" placeholder="Nieuwe tag, bv. Grote groepen">
+          <button type="button" class="btn btn-outline btn-sm" data-action="quick-add-tag">${icon('plus')} Toevoegen</button>
         </div>
       </div>
       <div class="mb-4">
@@ -517,6 +559,7 @@ async function handleRecipeFormSubmit(e) {
     .map((i) => ({ naam: i.naam, hoeveelheid: i.hoeveelheid === '' ? null : Number(i.hoeveelheid), eenheid: i.eenheid }));
   const instructiesText = (fd.get('instructiesText') || '').toString();
   const instructies = instructiesText.split('\n').map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+  const tagIds = Array.from(form.querySelectorAll('[name="tagIds"]:checked')).map((cb) => cb.value);
 
   const payload = {
     titel,
@@ -527,6 +570,7 @@ async function handleRecipeFormSubmit(e) {
     bereidingstijd: Math.max(0, Number(fd.get('bereidingstijd')) || 0),
     ingredienten,
     instructies,
+    tagIds,
     bron: (fd.get('bron') || '').toString().trim()
   };
   if (state.modal && state.modal.type === 'edit') payload.id = state.modal.id;
@@ -594,8 +638,9 @@ async function handleJsonFile(file) {
   try {
     const text = await file.text();
     const raw = JSON.parse(text);
+    const basis = basisNamen(), proteine = proteineNamen(), keuken = keukenNamen();
     if (Array.isArray(raw)) {
-      const recipes = raw.map(normalizeRecipeJson);
+      const recipes = raw.map((r) => normalizeRecipeJson(r, basis, proteine, keuken));
       const saved = [];
       for (const r of recipes) {
         const s = await db.saveRecipe(r);
@@ -606,7 +651,7 @@ async function handleJsonFile(file) {
       rerender();
       return;
     }
-    const recipe = normalizeRecipeJson(raw);
+    const recipe = normalizeRecipeJson(raw, basis, proteine, keuken);
     state.modal.draftRecipe = recipe;
     state.modal.step = 'vorm';
     rerender();
@@ -619,6 +664,21 @@ async function handleJsonFile(file) {
 }
 
 // ─────────────────────────────────────────── Modal: Receptdetail
+function todayISODate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function renderNotitiesLijst() {
+  if (state.notitiesLoading) return `<p class="text-sm text-soft">Opmerkingen laden...</p>`;
+  if (state.viewNotities.length === 0) return `<p class="text-sm text-soft">Nog geen opmerkingen.</p>`;
+  return state.viewNotities.map((n) => `
+    <div class="flex justify-between items-start gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <div class="text-sm"><span class="mono text-soft">${formatDatumNL(n.datum)}</span> — ${escapeHtml(n.tekst)}</div>
+      <button class="btn btn-outline btn-icon btn-sm" data-action="delete-notitie" data-id="${n.id}">${icon('x')}</button>
+    </div>
+  `).join('');
+}
+
 function renderViewModal(recipe) {
   if (!recipe) return '';
   const vp = state.viewPersonen || recipe.personen;
@@ -634,6 +694,7 @@ function renderViewModal(recipe) {
           <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
         </div>
         <div class="pills mb-3">${renderPill('basis', recipe.basis)}${renderPill('proteine', recipe.proteine)}${renderPill('keuken', recipe.keuken)}</div>
+        ${(recipe.tags || []).length ? `<div class="pills mb-3">${recipe.tags.map((t) => `<span class="tag-chip-sm">${escapeHtml(t.naam)}</span>`).join('')}</div>` : ''}
         ${recipe.bron ? `<a href="${escapeHtml(recipe.bron)}" target="_blank" rel="noreferrer" class="text-sm" style="display:inline-block;margin-bottom:12px">Bron bekijken</a>` : ''}
         <div class="flex gap-4 mb-4 flex-wrap">
           <div>
@@ -666,6 +727,13 @@ function renderViewModal(recipe) {
         <ol class="text-sm mb-4" style="padding-left:20px">
           ${(recipe.instructies || []).map((s) => `<li style="margin-bottom:6px">${escapeHtml(s)}</li>`).join('')}
         </ol>
+        <h3 class="display mb-2" style="font-size:15px">Opmerkingen</h3>
+        <div id="notities-lijst" class="mb-3">${renderNotitiesLijst()}</div>
+        <div class="flex gap-2 mb-4">
+          <input id="notitie-tekst" class="input" style="flex:1" placeholder="Bijv. iets meer zout toegevoegd, was lekker">
+          <input id="notitie-datum" class="input" type="date" style="width:150px" value="${todayISODate()}">
+          <button class="btn btn-outline btn-sm" data-action="add-notitie" data-id="${recipe.id}">${icon('plus')}</button>
+        </div>
         <div class="flex flex-wrap items-center gap-2" style="border-top:1px solid var(--line);padding-top:16px">
           <select id="plan-day-select" class="input" style="width:auto">
             ${DAGEN.map((d) => `<option value="${d}" ${d === planDay ? 'selected' : ''}>${DAG_NAMEN[d]}</option>`).join('')}
@@ -711,6 +779,60 @@ function renderPickResults() {
   return `<div class="grid">${list.map((r) => renderRecipeCard(r, state.pickerSortFridge ? fridgeMatchForRecipe(r, fridgeNames) : null, 'pick-recipe')).join('')}</div>`;
 }
 
+// ─────────────────────────────────────────── Modal: Kenmerken & tags beheren
+function renderManageModal() {
+  const m = state.modal;
+  const tabs = [
+    { key: 'basis', label: 'Basis' },
+    { key: 'proteine', label: 'Proteïne' },
+    { key: 'keuken', label: 'Keuken' },
+    { key: 'tags', label: 'Tags' }
+  ];
+  const items = m.categorie === 'tags' ? state.tags : state.kenmerkOpties[m.categorie];
+  return `
+    <div class="modal-backdrop">
+      <div class="modal-card">
+        <div class="flex justify-between items-center mb-1">
+          <h2 class="display" style="font-size:20px;margin:0">Kenmerken & tags beheren</h2>
+          <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
+        </div>
+        <p class="text-sm text-soft mb-3">Wijzigingen gelden voor alle recepten. Hernoemen werkt overal door; verwijderen kan alleen als niets deze waarde meer gebruikt (bij tags wordt de tag dan gewoon overal weggehaald).</p>
+        <div class="flex gap-2 mb-4" style="border-bottom:1px solid var(--line);padding-bottom:12px">
+          ${tabs.map((t) => `<button class="btn ${m.categorie === t.key ? 'btn-primary' : 'btn-outline'} btn-sm" data-action="manage-tab" data-categorie="${t.key}">${escapeHtml(t.label)}</button>`).join('')}
+        </div>
+        ${m.error ? bannerError(m.error) : ''}
+        <div class="mb-3">
+          ${items.length === 0 ? `<p class="text-sm text-soft">Nog niets toegevoegd.</p>` : items.map((it) => renderManageRow(it, m)).join('')}
+        </div>
+        <div class="flex gap-2">
+          <input id="manage-new-item" class="input" style="flex:1" placeholder="Nieuwe ${m.categorie === 'tags' ? 'tag' : 'optie'}...">
+          <button class="btn btn-primary btn-sm" data-action="manage-add">${icon('plus')} Toevoegen</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderManageRow(item, m) {
+  const isRenaming = m.renameId === item.id;
+  if (isRenaming) {
+    return `
+      <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+        <input id="manage-rename-input" class="input" style="flex:1" value="${escapeHtml(item.naam)}">
+        <button class="btn btn-primary btn-sm btn-icon" data-action="manage-rename-save" data-id="${item.id}">${icon('check')}</button>
+        <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-cancel">${icon('x')}</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <span class="text-sm" style="flex:1">${escapeHtml(item.naam)}</span>
+      <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-start" data-id="${item.id}">${icon('pencil')}</button>
+      <button class="btn btn-outline btn-sm btn-icon" data-action="manage-delete" data-id="${item.id}" data-naam="${escapeHtml(item.naam)}">${icon('trash-2')}</button>
+    </div>
+  `;
+}
+
 // ─────────────────────────────────────────── Bevestigingsdialoog
 function renderConfirmDialog(message) {
   return `
@@ -747,7 +869,7 @@ async function handleAction(action, el) {
   switch (action) {
     case 'tab':
       state.activeTab = el.dataset.tab;
-      state.filters = { basis: '', proteine: '', keuken: '', maxTijd: '', zoek: '' };
+      state.filters = { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' };
       rerender();
       break;
 
@@ -764,8 +886,38 @@ async function handleAction(action, el) {
       state.modal = { type: 'view', id: el.dataset.id };
       state.viewPersonen = null;
       state.planDay = null;
+      state.viewNotities = [];
+      state.notitiesLoading = true;
+      rerender();
+      db.fetchNotities(el.dataset.id).then((notities) => {
+        if (!state.modal || state.modal.type !== 'view' || state.modal.id !== el.dataset.id) return;
+        state.viewNotities = notities;
+        state.notitiesLoading = false;
+        rerender();
+      }).catch((err) => {
+        state.notitiesLoading = false;
+        console.error(err);
+        rerender();
+      });
+      break;
+
+    case 'add-notitie': {
+      const tekst = document.getElementById('notitie-tekst').value.trim();
+      const datum = document.getElementById('notitie-datum').value;
+      if (!tekst) break;
+      const row = await db.addNotitie(el.dataset.id, tekst, datum);
+      state.viewNotities = [row, ...state.viewNotities].sort((a, b) => (b.datum + b.aangemaakt).localeCompare(a.datum + a.aangemaakt));
       rerender();
       break;
+    }
+
+    case 'delete-notitie': {
+      const recipeId = state.modal.id;
+      await db.deleteNotitie(el.dataset.id, recipeId);
+      state.viewNotities = state.viewNotities.filter((n) => n.id !== el.dataset.id);
+      rerender();
+      break;
+    }
 
     case 'open-edit':
       state.modal = { type: 'edit', id: el.dataset.id };
@@ -775,6 +927,11 @@ async function handleAction(action, el) {
     case 'open-pick':
       state.modal = { type: 'pick', day: el.dataset.day };
       state.pickerSortFridge = false;
+      rerender();
+      break;
+
+    case 'open-manage':
+      state.modal = { type: 'manage', categorie: 'basis', error: '', renameId: null };
       rerender();
       break;
 
@@ -914,7 +1071,7 @@ async function handleAction(action, el) {
       break;
 
     case 'clear-filters':
-      state.filters = { basis: '', proteine: '', keuken: '', maxTijd: '', zoek: '' };
+      state.filters = { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' };
       rerender();
       break;
 
@@ -933,6 +1090,120 @@ async function handleAction(action, el) {
       await db.updateInstellingen({ boodschappen_vinkjes: {} });
       rerender();
       break;
+
+    case 'quick-add-tag': {
+      const input = document.getElementById('form-new-tag');
+      const naam = input.value.trim();
+      if (!naam) break;
+      if (state.tags.some((t) => t.naam.toLowerCase() === naam.toLowerCase())) { input.value = ''; break; }
+      const tagsContainer = document.getElementById('form-tags');
+      const checkedIds = tagsContainer
+        ? Array.from(tagsContainer.querySelectorAll('[name="tagIds"]:checked')).map((cb) => cb.value)
+        : [];
+      const newTag = await db.addTag(naam);
+      state.tags = [...state.tags, newTag].sort((a, b) => a.naam.localeCompare(b.naam));
+      if (tagsContainer) { tagsContainer.innerHTML = tagCheckboxesHtml([...checkedIds, newTag.id]); hydrateIcons(); }
+      input.value = '';
+      break;
+    }
+
+    case 'manage-tab':
+      state.modal.categorie = el.dataset.categorie;
+      state.modal.renameId = null;
+      state.modal.error = '';
+      rerender();
+      break;
+
+    case 'manage-add': {
+      const input = document.getElementById('manage-new-item');
+      const naam = input.value.trim();
+      if (!naam) break;
+      const categorie = state.modal.categorie;
+      try {
+        if (categorie === 'tags') {
+          const row = await db.addTag(naam);
+          state.tags = [...state.tags, row].sort((a, b) => a.naam.localeCompare(b.naam));
+        } else {
+          const row = await db.addKenmerkOptie(categorie, naam);
+          state.kenmerkOpties[categorie] = [...state.kenmerkOpties[categorie], row];
+        }
+        state.modal.error = '';
+        rerender();
+      } catch (err) {
+        state.modal.error = (err && err.message) || 'Toevoegen mislukt.';
+        rerender();
+      }
+      break;
+    }
+
+    case 'manage-rename-start':
+      state.modal.renameId = el.dataset.id;
+      rerender();
+      break;
+
+    case 'manage-rename-cancel':
+      state.modal.renameId = null;
+      rerender();
+      break;
+
+    case 'manage-rename-save': {
+      const id = el.dataset.id;
+      const categorie = state.modal.categorie;
+      const input = document.getElementById('manage-rename-input');
+      const nieuweNaam = input.value.trim();
+      if (!nieuweNaam) break;
+      try {
+        if (categorie === 'tags') {
+          await db.renameTag(id, nieuweNaam);
+          state.tags = state.tags.map((t) => (t.id === id ? { ...t, naam: nieuweNaam } : t)).sort((a, b) => a.naam.localeCompare(b.naam));
+          state.recipes = state.recipes.map((r) => ({ ...r, tags: (r.tags || []).map((t) => (t.id === id ? { ...t, naam: nieuweNaam } : t)) }));
+        } else {
+          const oud = state.kenmerkOpties[categorie].find((k) => k.id === id);
+          const oudeNaam = oud ? oud.naam : null;
+          await db.renameKenmerkOptie(id, categorie, oudeNaam, nieuweNaam);
+          state.kenmerkOpties[categorie] = state.kenmerkOpties[categorie].map((k) => (k.id === id ? { ...k, naam: nieuweNaam } : k));
+          if (oudeNaam) state.recipes = state.recipes.map((r) => (r[categorie] === oudeNaam ? { ...r, [categorie]: nieuweNaam } : r));
+        }
+        state.modal.renameId = null;
+        state.modal.error = '';
+        rerender();
+      } catch (err) {
+        state.modal.error = (err && err.message) || 'Hernoemen mislukt.';
+        rerender();
+      }
+      break;
+    }
+
+    case 'manage-delete': {
+      const id = el.dataset.id;
+      const naam = el.dataset.naam;
+      const categorie = state.modal.categorie;
+      state.confirm = {
+        message: categorie === 'tags'
+          ? `Tag "${naam}" verwijderen? Dit haalt hem ook weg bij recepten die hem gebruiken.`
+          : `"${naam}" verwijderen?`,
+        onConfirm: async () => {
+          try {
+            if (categorie === 'tags') {
+              await db.deleteTag(id);
+              state.tags = state.tags.filter((t) => t.id !== id);
+              state.recipes = state.recipes.map((r) => ({ ...r, tags: (r.tags || []).filter((t) => t.id !== id) }));
+            } else {
+              await db.deleteKenmerkOptie(id, categorie, naam);
+              state.kenmerkOpties[categorie] = state.kenmerkOpties[categorie].filter((k) => k.id !== id);
+            }
+            state.confirm = null;
+            rerender();
+          } catch (err) {
+            state.confirm = null;
+            state.modal.error = (err && err.message) || 'Verwijderen mislukt.';
+            rerender();
+          }
+        }
+      };
+      rerender();
+      break;
+    }
 
     default:
       break;
