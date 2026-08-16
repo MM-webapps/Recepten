@@ -84,7 +84,7 @@ function renderLoading() {
   return `<div style="min-height:60vh;display:flex;align-items:center;justify-content:center">
     <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
       ${icon('loader-2', 'spin')}
-      <span class="text-sm text-soft">Receptenkist wordt geladen...</span>
+      <span class="text-sm text-soft">MMenu-Planner wordt geladen...</span>
     </div>
   </div>`;
 }
