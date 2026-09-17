@@ -103,7 +103,7 @@ const demoSeedRecipes = [
         { naam: 'Gehakt', hoeveelheid: 400, eenheid: 'g' },
         { naam: 'Gezeefde tomaten', hoeveelheid: 700, eenheid: 'ml' },
         { naam: 'Ui', hoeveelheid: 1, eenheid: '' },
-        { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'teentje' }
+        { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'tenen' }
       ],
       instructies: [
         'Fruit ui en knoflook aan.',
@@ -123,7 +123,7 @@ const demoSeedRecipes = [
           { naam: 'Kipfilet', hoeveelheid: 500, eenheid: 'g' },
           { naam: 'Yoghurt', hoeveelheid: 150, eenheid: 'g' },
           { naam: 'Kerriepoeder', hoeveelheid: 1, eenheid: 'el' },
-          { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'teentje' }
+          { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'tenen' }
         ],
         instructies: [
           'Meng de yoghurt met kerriepoeder en geperste knoflook.',
