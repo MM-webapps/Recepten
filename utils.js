@@ -28,7 +28,7 @@ const EENHEID_ALIASSEN = {
   'eetlepel': 'el', 'eetlepels': 'el', 'tbsp': 'el',
   'theelepel': 'tl', 'theelepels': 'tl', 'tsp': 'tl',
   'stuk': 'stuks', 'stk': 'stuks',
-  'teen': 'teentje', 'teentjes': 'teentje',
+  'tenen': 'teentje', 'teentjes': 'tenen',
   'snuf': 'snufje', 'snufjes': 'snufje',
   'blik': 'blikje', 'blikjes': 'blikje'
 };
