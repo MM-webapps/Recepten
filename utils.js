@@ -18,7 +18,7 @@ export function normName(s) {
 // ─────────────────────────────── Eenheden normaliseren
 // Canonieke eenheden die de app gebruikt — dit is ook de lijst die in het
 // formulier als keuzelijst verschijnt.
-export const EENHEID_OPTIES = ['', 'g', 'kg', 'ml', 'l', 'el', 'tl', 'stuks', 'teentje', 'snufje', 'blikje'];
+export const EENHEID_OPTIES = ['', 'g', 'kg', 'ml', 'l', 'el', 'tl', 'stuks', 'tenen', 'snufje', 'blikje','cm'];
 
 const EENHEID_ALIASSEN = {
   'gram': 'g', 'grammen': 'g', 'gr': 'g',
