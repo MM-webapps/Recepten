@@ -97,14 +97,48 @@ In de app, via **Nieuw recept**, kies je tussen:
   waarde gebruiken; verwijderen kan alleen als geen enkel recept de waarde
   nog gebruikt.
 
+## 6. Nieuw: onderdelen binnen een recept, en een schone boodschappenlijst
+
+- **Onderdelen:** een recept kan uit meerdere delen bestaan die je apart
+  bereidt (bv. "Marinade" + "Saus" bij butter chicken). Klik in het
+  formulier op **+ Onderdeel** om een tweede deel toe te voegen, met een
+  eigen naam, eigen ingrediënten en eigen bereidingswijze. Voor een gewoon
+  recept laat je de naam van het (ene) onderdeel gewoon leeg — je ziet dan
+  geen verschil met vroeger.
+- **Eén ingrediëntenlijst achter de schermen:** elk ingrediënt dat je typt
+  wordt gekoppeld aan een vast, uniek ingrediënt (bv. "ui"). Typ je een
+  volgende keer "Ui" of "ui" met een spatie erachter, dan wordt automatisch
+  hetzelfde ingrediënt herkend. Bij **Beheren → Ingrediënten** kun je
+  bovendien dubbele varianten die je AI-import verschillend heeft genoemd
+  (bv. "rode ui" en "ui") handmatig **samenvoegen** tot één — de
+  boodschappenlijst telt ze daarna als één ding op, ook met terugwerkende
+  kracht.
+- **Eenheden worden genormaliseerd:** "gr", "gram" en "g" (en zo ook bij
+  el/eetlepel, tl/theelepel, etc.) worden intern allemaal dezelfde
+  eenheid, zodat de boodschappenlijst hoeveelheden goed kan optellen. In
+  het formulier kies je de eenheid nu uit een lijstje in plaats van vrije
+  tekst te typen, zodat nieuwe invoer altijd meteen goed staat.
+
 **Voor deze update moet je `schema.sql` opnieuw draaien in Supabase** (SQL
-Editor → plak het hele bestand → Run). Dit voegt drie nieuwe tabellen toe
-(`kenmerk_opties`, `tags`, `recipe_tags`, `notities`) en vult
-`kenmerk_opties` met de bestaande basis/proteïne/keuken-waarden, zodat je
-niets kwijtraakt. Bestaande recepten, weekmenu's en koelkastinhoud blijven
-ongewijzigd.
+Editor → plak het hele bestand → Run). Dit is de grootste migratie tot nu
+toe:
+- Er komen vier nieuwe tabellen bij: `ingredients` (canonieke
+  ingrediënten), `ingredient_aliassen` (samengevoegde/bijnamen),
+  `recipe_onderdelen` en `recipe_ingredienten`.
+- Je **bestaande recepten worden automatisch omgezet**: elk recept krijgt
+  één onderdeel (zonder naam) met precies de ingrediënten en instructies
+  die het al had, en van elke ingrediënt-tekst wordt een canoniek
+  ingrediënt gemaakt. Er gaat niets verloren en je hoeft niets over te
+  typen.
+- De oude kolommen `recipes.ingredienten` / `recipes.instructies` worden
+  hernoemd naar `..._legacy` (als back-up, de app gebruikt ze niet meer).
+  Je kunt ze desgewenst later handmatig verwijderen, maar dat hoeft niet.
+- Dit migratieblok draait vanzelf maar één keer: de tweede keer dat je
+  `schema.sql` runt (nu of bij een volgende update), ziet het script dat de
+  oude kolommen al hernoemd zijn en slaat het de migratie over. Gewoon het
+  hele bestand blijven herplakken is dus nog steeds veilig.
 
-
+## Beveiliging — belangrijk om te weten
 
 Je hebt gekozen voor **geen login**. Dat betekent:
 
@@ -128,7 +162,7 @@ Je hebt gekozen voor **geen login**. Dat betekent:
 | `config.js`      | **Hier vul je je Supabase-gegevens in**                        |
 | `db.js`          | Alle Supabase-lees/schrijffuncties (met ingebouwde demo-modus)  |
 | `constants.js`   | Dagen, kleuren/iconen per kenmerk (de opties zelf staan in Supabase) |
-| `utils.js`       | Hulpfuncties: matching, boodschappenlijst, JSON-validatie       |
+| `utils.js`       | Hulpfuncties: matching, boodschappenlijst, eenheden, JSON-validatie |
 | `app.js`         | De applicatie zelf: state, rendering, events                    |
 | `schema.sql`      | Het hele Supabase-schema, in één keer te runnen                |
 | `ai-prompt.md`   | Prompt om recepten met een AI-tool naar het juiste JSON-formaat om te zetten |

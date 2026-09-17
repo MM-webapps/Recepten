@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { DEMO_MODE } from './db.js';
 import { DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
-import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL } from './utils.js';
+import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, EENHEID_OPTIES, alleIngredienten } from './utils.js';
 
 const state = {
   loaded: false,
@@ -11,6 +11,7 @@ const state = {
   instellingen: { huishoud_personen: 2, boodschappen_vinkjes: {} },
   kenmerkOpties: { basis: [], proteine: [], keuken: [] },
   tags: [],
+  ingredients: [],
   activeTab: 'recepten',
   filters: { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' },
   pickerSortFridge: false,
@@ -44,9 +45,9 @@ async function init() {
   root.innerHTML = renderLoading();
   hydrateIcons();
   try {
-    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags] = await Promise.all([
+    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients] = await Promise.all([
       db.fetchRecipes(), db.fetchWeekmenu(), db.fetchKoelkast(), db.fetchInstellingen(),
-      db.fetchKenmerkOpties(), db.fetchTags()
+      db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients()
     ]);
     state.recipes = recipes;
     state.weekmenu = weekmenu;
@@ -58,6 +59,7 @@ async function init() {
       keuken: kenmerkOptiesRaw.filter((o) => o.categorie === 'keuken')
     };
     state.tags = tags;
+    state.ingredients = ingredients;
     state.loaded = true;
     rerender();
   } catch (e) {
@@ -84,7 +86,7 @@ function renderLoading() {
   return `<div style="min-height:60vh;display:flex;align-items:center;justify-content:center">
     <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
       ${icon('loader-2', 'spin')}
-      <span class="text-sm text-soft">MMenu-Planner wordt geladen...</span>
+      <span class="text-sm text-soft">Receptenkist wordt geladen...</span>
     </div>
   </div>`;
 }
@@ -159,7 +161,7 @@ function renderHeaderNav() {
   return `
     <div class="header">
       <div class="wrap header-top">
-        <div class="brand">${icon('chef-hat')}<span class="display">MMenu-Planner</span></div>
+        <div class="brand">${icon('chef-hat')}<span class="display">Receptenkist</span></div>
         <div class="flex gap-2">
           <button class="btn btn-outline btn-sm" data-action="open-manage">${icon('settings')} Beheren</button>
           <button class="btn btn-primary btn-sm" data-action="open-add">${icon('plus')} Nieuw recept</button>
@@ -253,7 +255,7 @@ function filterRecipes(recipes, filters) {
     if (filters.zoek) {
       const q = filters.zoek.toLowerCase();
       const inTitle = r.titel.toLowerCase().includes(q);
-      const inIng = (r.ingredienten || []).some((i) => (i.naam || '').toLowerCase().includes(q));
+      const inIng = alleIngredienten(r).some((i) => (i.naam || '').toLowerCase().includes(q));
       if (!inTitle && !inIng) return false;
     }
     return true;
@@ -445,10 +447,35 @@ function ingredientRowHtml(ing) {
   ing = ing || {};
   return `
     <div class="ing-row">
-      <input class="input naam" placeholder="Ingrediënt" value="${escapeHtml(ing.naam || '')}">
+      <input class="input naam" list="ingredient-namen" placeholder="Ingrediënt" value="${escapeHtml(ing.naam || '')}">
       <input class="input aantal" type="number" step="any" placeholder="aantal" value="${ing.hoeveelheid != null ? ing.hoeveelheid : ''}">
-      <input class="input eenheid" placeholder="eenheid" value="${escapeHtml(ing.eenheid || '')}">
+      <select class="input eenheid">${EENHEID_OPTIES.map((e) => `<option value="${e}" ${e === (ing.eenheid || '') ? 'selected' : ''}>${e || '(geen)'}</option>`).join('')}</select>
       <button type="button" class="btn btn-outline btn-icon" data-action="remove-ing-row">${icon('x')}</button>
+    </div>
+  `;
+}
+
+function ingredientNamenDatalist() {
+  return `<datalist id="ingredient-namen">${state.ingredients.map((i) => `<option value="${escapeHtml(i.naam)}">`).join('')}</datalist>`;
+}
+
+function onderdeelBlockHtml(onderdeel) {
+  onderdeel = onderdeel || {};
+  const ingredienten = (onderdeel.ingredienten && onderdeel.ingredienten.length) ? onderdeel.ingredienten : [{}];
+  const instructiesText = (onderdeel.instructies || []).join('\n');
+  return `
+    <div class="card onderdeel-block mb-3" style="padding:14px">
+      <div class="flex items-center gap-2 mb-3">
+        <input class="input onderdeel-naam" style="flex:1" placeholder="Naam onderdeel (optioneel, bv. Marinade)" value="${escapeHtml(onderdeel.naam || '')}">
+        <button type="button" class="btn btn-outline btn-icon" data-action="remove-onderdeel" title="Onderdeel verwijderen">${icon('x')}</button>
+      </div>
+      <div class="flex justify-between items-center mb-1">
+        <label class="field-label" style="margin:0">Ingrediënten</label>
+        <button type="button" class="btn btn-outline btn-sm" data-action="add-ing-row">${icon('plus')} Regel</button>
+      </div>
+      <div class="ing-rows mb-3">${ingredienten.map(ingredientRowHtml).join('')}</div>
+      <label class="field-label">Bereidingswijze (één stap per regel)</label>
+      <textarea class="input onderdeel-instructies" rows="4" placeholder="Snijd de ui fijn.&#10;Bak de kip aan.">${escapeHtml(instructiesText)}</textarea>
     </div>
   `;
 }
@@ -478,8 +505,7 @@ function tagCheckboxesHtml(selectedIds) {
 function renderRecipeFormFields(initialRecipe, opts) {
   opts = opts || {};
   const r = initialRecipe || {};
-  const ingredienten = (r.ingredienten && r.ingredienten.length) ? r.ingredienten : [{}];
-  const instructiesText = (r.instructies || []).join('\n');
+  const onderdelen = (r.onderdelen && r.onderdelen.length) ? r.onderdelen : [{}];
   return `
     <form id="recipe-form">
       <div class="flex justify-between items-start mb-1">
@@ -516,16 +542,14 @@ function renderRecipeFormFields(initialRecipe, opts) {
         </div>
       </div>
       <div class="mb-4">
-        <div class="flex justify-between items-center mb-1">
-          <label class="field-label" style="margin:0">Ingrediënten</label>
-          <button type="button" class="btn btn-outline btn-sm" data-action="add-ing-row">${icon('plus')} Regel</button>
+        <div class="flex justify-between items-center mb-2">
+          <label class="field-label" style="margin:0">Onderdelen</label>
+          <button type="button" class="btn btn-outline btn-sm" data-action="add-onderdeel">${icon('plus')} Onderdeel</button>
         </div>
-        <div id="ing-rows">${ingredienten.map(ingredientRowHtml).join('')}</div>
+        <p class="text-sm text-soft mb-2">Voor de meeste recepten is één onderdeel genoeg — laat de naam dan leeg. Bestaat het recept uit aparte delen (zoals een marinade en een saus), voeg dan een extra onderdeel toe en geef ze allebei een naam.</p>
+        <div id="onderdelen-list">${onderdelen.map(onderdeelBlockHtml).join('')}</div>
       </div>
-      <div class="mb-4">
-        <label class="field-label">Bereidingswijze (één stap per regel)</label>
-        <textarea class="input" name="instructiesText" rows="6" placeholder="Snijd de ui fijn.&#10;Bak de kip aan.">${escapeHtml(instructiesText)}</textarea>
-      </div>
+      ${ingredientNamenDatalist()}
       <div class="mb-4">
         <label class="field-label">Bron (optioneel)</label>
         <input class="input" name="bron" value="${escapeHtml(r.bron || '')}" placeholder="https://...">
@@ -549,16 +573,21 @@ async function handleRecipeFormSubmit(e) {
     hydrateIcons();
     return;
   }
-  const ingredienten = Array.from(form.querySelectorAll('.ing-row'))
-    .map((row) => ({
-      naam: row.querySelector('.naam').value.trim(),
-      hoeveelheid: row.querySelector('.aantal').value,
-      eenheid: row.querySelector('.eenheid').value.trim()
-    }))
-    .filter((i) => i.naam)
-    .map((i) => ({ naam: i.naam, hoeveelheid: i.hoeveelheid === '' ? null : Number(i.hoeveelheid), eenheid: i.eenheid }));
-  const instructiesText = (fd.get('instructiesText') || '').toString();
-  const instructies = instructiesText.split('\n').map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+  const onderdelen = Array.from(form.querySelectorAll('.onderdeel-block')).map((block) => {
+    const naam = block.querySelector('.onderdeel-naam').value.trim();
+    const ingredienten = Array.from(block.querySelectorAll('.ing-row'))
+      .map((row) => ({
+        naam: row.querySelector('.naam').value.trim(),
+        hoeveelheid: row.querySelector('.aantal').value,
+        eenheid: row.querySelector('.eenheid').value
+      }))
+      .filter((i) => i.naam)
+      .map((i) => ({ naam: i.naam, hoeveelheid: i.hoeveelheid === '' ? null : Number(i.hoeveelheid), eenheid: i.eenheid }));
+    const instructiesText = block.querySelector('.onderdeel-instructies').value;
+    const instructies = instructiesText.split('\n').map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+    return { naam, ingredienten, instructies };
+  }).filter((o) => o.ingredienten.length || o.instructies.length || o.naam);
+  const finalOnderdelen = onderdelen.length ? onderdelen : [{ naam: '', ingredienten: [], instructies: [] }];
   const tagIds = Array.from(form.querySelectorAll('[name="tagIds"]:checked')).map((cb) => cb.value);
 
   const payload = {
@@ -568,8 +597,7 @@ async function handleRecipeFormSubmit(e) {
     keuken: fd.get('keuken'),
     personen: Math.max(1, Number(fd.get('personen')) || 1),
     bereidingstijd: Math.max(0, Number(fd.get('bereidingstijd')) || 0),
-    ingredienten,
-    instructies,
+    onderdelen: finalOnderdelen,
     tagIds,
     bron: (fd.get('bron') || '').toString().trim()
   };
@@ -581,6 +609,7 @@ async function handleRecipeFormSubmit(e) {
     const saved = await db.saveRecipe(payload);
     const exists = state.recipes.some((r) => r.id === saved.id);
     state.recipes = exists ? state.recipes.map((r) => (r.id === saved.id ? saved : r)) : [saved, ...state.recipes];
+    state.ingredients = await db.fetchIngredients();
     state.modal = null;
     rerender();
   } catch (err) {
@@ -679,6 +708,19 @@ function renderNotitiesLijst() {
   `).join('');
 }
 
+function ingredientenListHtml(ingredienten, factor) {
+  return (ingredienten || []).map((ing) => `
+    <div class="flex justify-between text-sm" style="padding:5px 0;border-bottom:1px solid var(--line)">
+      <span>${escapeHtml(ing.naam)}${ing.notitie ? ` <span class="text-soft">(${escapeHtml(ing.notitie)})</span>` : ''}</span>
+      <span class="mono text-soft">${ing.hoeveelheid != null ? Math.round(ing.hoeveelheid * factor * 100) / 100 : ''} ${escapeHtml(ing.eenheid || '')}</span>
+    </div>
+  `).join('');
+}
+
+function instructiesListHtml(instructies) {
+  return (instructies || []).map((s) => `<li style="margin-bottom:6px">${escapeHtml(s)}</li>`).join('');
+}
+
 function renderViewModal(recipe) {
   if (!recipe) return '';
   const vp = state.viewPersonen || recipe.personen;
@@ -714,19 +756,18 @@ function renderViewModal(recipe) {
           <div class="text-sm mb-1">${match.matched}/${match.total} ingrediënten in je koelkast</div>
           <div class="progress-track"><div class="progress-fill" style="width:${match.pct}%"></div></div>
         </div>
-        <h3 class="display mb-2" style="font-size:15px">Ingrediënten</h3>
-        <div class="mb-4">
-          ${(recipe.ingredienten || []).map((ing) => `
-            <div class="flex justify-between text-sm" style="padding:5px 0;border-bottom:1px solid var(--line)">
-              <span>${escapeHtml(ing.naam)}</span>
-              <span class="mono text-soft">${ing.hoeveelheid != null ? Math.round(ing.hoeveelheid * factor * 100) / 100 : ''} ${escapeHtml(ing.eenheid || '')}</span>
-            </div>
-          `).join('')}
-        </div>
-        <h3 class="display mb-2" style="font-size:15px">Bereiding</h3>
-        <ol class="text-sm mb-4" style="padding-left:20px">
-          ${(recipe.instructies || []).map((s) => `<li style="margin-bottom:6px">${escapeHtml(s)}</li>`).join('')}
-        </ol>
+        ${(recipe.onderdelen || []).length <= 1 ? `
+          <h3 class="display mb-2" style="font-size:15px">Ingrediënten</h3>
+          <div class="mb-4">${ingredientenListHtml(((recipe.onderdelen || [])[0] || {}).ingredienten, factor)}</div>
+          <h3 class="display mb-2" style="font-size:15px">Bereiding</h3>
+          <ol class="text-sm mb-4" style="padding-left:20px">${instructiesListHtml(((recipe.onderdelen || [])[0] || {}).instructies)}</ol>
+        ` : recipe.onderdelen.map((onderdeel) => `
+          <div class="mb-4">
+            <h3 class="display mb-2" style="font-size:15px;color:var(--teal)">${escapeHtml(onderdeel.naam || 'Onderdeel')}</h3>
+            <div class="mb-2">${ingredientenListHtml(onderdeel.ingredienten, factor)}</div>
+            <ol class="text-sm" style="padding-left:20px">${instructiesListHtml(onderdeel.instructies)}</ol>
+          </div>
+        `).join('')}
         <h3 class="display mb-2" style="font-size:15px">Opmerkingen</h3>
         <div id="notities-lijst" class="mb-3">${renderNotitiesLijst()}</div>
         <div class="flex gap-2 mb-4">
@@ -779,33 +820,36 @@ function renderPickResults() {
   return `<div class="grid">${list.map((r) => renderRecipeCard(r, state.pickerSortFridge ? fridgeMatchForRecipe(r, fridgeNames) : null, 'pick-recipe')).join('')}</div>`;
 }
 
-// ─────────────────────────────────────────── Modal: Kenmerken & tags beheren
+// ─────────────────────────────────────────── Modal: Kenmerken, tags & ingrediënten beheren
 function renderManageModal() {
   const m = state.modal;
   const tabs = [
     { key: 'basis', label: 'Basis' },
     { key: 'proteine', label: 'Proteïne' },
     { key: 'keuken', label: 'Keuken' },
-    { key: 'tags', label: 'Tags' }
+    { key: 'tags', label: 'Tags' },
+    { key: 'ingredienten', label: 'Ingrediënten' }
   ];
-  const items = m.categorie === 'tags' ? state.tags : state.kenmerkOpties[m.categorie];
+  const items = m.categorie === 'tags' ? state.tags
+    : m.categorie === 'ingredienten' ? state.ingredients
+    : state.kenmerkOpties[m.categorie];
   return `
     <div class="modal-backdrop">
       <div class="modal-card">
         <div class="flex justify-between items-center mb-1">
-          <h2 class="display" style="font-size:20px;margin:0">Kenmerken & tags beheren</h2>
+          <h2 class="display" style="font-size:20px;margin:0">Beheren</h2>
           <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
         </div>
-        <p class="text-sm text-soft mb-3">Wijzigingen gelden voor alle recepten. Hernoemen werkt overal door; verwijderen kan alleen als niets deze waarde meer gebruikt (bij tags wordt de tag dan gewoon overal weggehaald).</p>
-        <div class="flex gap-2 mb-4" style="border-bottom:1px solid var(--line);padding-bottom:12px">
+        <p class="text-sm text-soft mb-3">Wijzigingen gelden voor alle recepten. Hernoemen werkt overal door; verwijderen kan alleen als niets deze waarde meer gebruikt. Bij ingrediënten kun je twee dubbele varianten ook samenvoegen (bv. "rode ui" → "ui"), zodat de boodschappenlijst ze als één ding optelt.</p>
+        <div class="flex gap-2 mb-4 flex-wrap" style="border-bottom:1px solid var(--line);padding-bottom:12px">
           ${tabs.map((t) => `<button class="btn ${m.categorie === t.key ? 'btn-primary' : 'btn-outline'} btn-sm" data-action="manage-tab" data-categorie="${t.key}">${escapeHtml(t.label)}</button>`).join('')}
         </div>
         ${m.error ? bannerError(m.error) : ''}
-        <div class="mb-3">
-          ${items.length === 0 ? `<p class="text-sm text-soft">Nog niets toegevoegd.</p>` : items.map((it) => renderManageRow(it, m)).join('')}
+        <div class="mb-3" style="max-height:340px;overflow-y:auto">
+          ${items.length === 0 ? `<p class="text-sm text-soft">Nog niets toegevoegd.</p>` : items.map((it) => (m.categorie === 'ingredienten' ? renderIngredientRow(it, m) : renderManageRow(it, m))).join('')}
         </div>
         <div class="flex gap-2">
-          <input id="manage-new-item" class="input" style="flex:1" placeholder="Nieuwe ${m.categorie === 'tags' ? 'tag' : 'optie'}...">
+          <input id="manage-new-item" class="input" style="flex:1" placeholder="Nieuwe ${m.categorie === 'tags' ? 'tag' : m.categorie === 'ingredienten' ? 'ingrediënt' : 'optie'}...">
           <button class="btn btn-primary btn-sm" data-action="manage-add">${icon('plus')} Toevoegen</button>
         </div>
       </div>
@@ -827,6 +871,41 @@ function renderManageRow(item, m) {
   return `
     <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
       <span class="text-sm" style="flex:1">${escapeHtml(item.naam)}</span>
+      <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-start" data-id="${item.id}">${icon('pencil')}</button>
+      <button class="btn btn-outline btn-sm btn-icon" data-action="manage-delete" data-id="${item.id}" data-naam="${escapeHtml(item.naam)}">${icon('trash-2')}</button>
+    </div>
+  `;
+}
+
+function renderIngredientRow(item, m) {
+  const isRenaming = m.renameId === item.id;
+  const isMerging = m.mergeId === item.id;
+  if (isRenaming) {
+    return `
+      <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+        <input id="manage-rename-input" class="input" style="flex:1" value="${escapeHtml(item.naam)}">
+        <button class="btn btn-primary btn-sm btn-icon" data-action="manage-rename-save" data-id="${item.id}">${icon('check')}</button>
+        <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-cancel">${icon('x')}</button>
+      </div>
+    `;
+  }
+  if (isMerging) {
+    const opties = state.ingredients.filter((i) => i.id !== item.id);
+    return `
+      <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+        <span class="text-sm text-soft" style="white-space:nowrap">"${escapeHtml(item.naam)}" → </span>
+        <select id="merge-target-select" class="input" style="flex:1">
+          ${opties.map((o) => `<option value="${o.id}">${escapeHtml(o.naam)}</option>`).join('')}
+        </select>
+        <button class="btn btn-primary btn-sm btn-icon" data-action="manage-merge-save" data-id="${item.id}">${icon('check')}</button>
+        <button class="btn btn-outline btn-sm btn-icon" data-action="manage-merge-cancel">${icon('x')}</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <span class="text-sm" style="flex:1">${escapeHtml(item.naam)}</span>
+      <button class="btn btn-outline btn-sm btn-icon" data-action="manage-merge-start" data-id="${item.id}" title="Samenvoegen met ander ingrediënt">${icon('git-merge')}</button>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-start" data-id="${item.id}">${icon('pencil')}</button>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-delete" data-id="${item.id}" data-naam="${escapeHtml(item.naam)}">${icon('trash-2')}</button>
     </div>
@@ -931,7 +1010,7 @@ async function handleAction(action, el) {
       break;
 
     case 'open-manage':
-      state.modal = { type: 'manage', categorie: 'basis', error: '', renameId: null };
+      state.modal = { type: 'manage', categorie: 'basis', error: '', renameId: null, mergeId: null };
       rerender();
       break;
 
@@ -1049,8 +1128,20 @@ async function handleAction(action, el) {
       break;
     }
 
+    case 'add-onderdeel': {
+      document.getElementById('onderdelen-list').insertAdjacentHTML('beforeend', onderdeelBlockHtml());
+      hydrateIcons();
+      break;
+    }
+
+    case 'remove-onderdeel': {
+      const blocks = document.querySelectorAll('.onderdeel-block');
+      if (blocks.length > 1) el.closest('.onderdeel-block').remove();
+      break;
+    }
+
     case 'add-ing-row': {
-      const container = document.getElementById('ing-rows');
+      const container = el.closest('.onderdeel-block').querySelector('.ing-rows');
       container.insertAdjacentHTML('beforeend', ingredientRowHtml());
       hydrateIcons();
       break;
@@ -1110,6 +1201,7 @@ async function handleAction(action, el) {
     case 'manage-tab':
       state.modal.categorie = el.dataset.categorie;
       state.modal.renameId = null;
+      state.modal.mergeId = null;
       state.modal.error = '';
       rerender();
       break;
@@ -1123,6 +1215,9 @@ async function handleAction(action, el) {
         if (categorie === 'tags') {
           const row = await db.addTag(naam);
           state.tags = [...state.tags, row].sort((a, b) => a.naam.localeCompare(b.naam));
+        } else if (categorie === 'ingredienten') {
+          const row = await db.addIngredient(naam);
+          state.ingredients = [...state.ingredients, row].sort((a, b) => a.naam.localeCompare(b.naam));
         } else {
           const row = await db.addKenmerkOptie(categorie, naam);
           state.kenmerkOpties[categorie] = [...state.kenmerkOpties[categorie], row];
@@ -1157,6 +1252,16 @@ async function handleAction(action, el) {
           await db.renameTag(id, nieuweNaam);
           state.tags = state.tags.map((t) => (t.id === id ? { ...t, naam: nieuweNaam } : t)).sort((a, b) => a.naam.localeCompare(b.naam));
           state.recipes = state.recipes.map((r) => ({ ...r, tags: (r.tags || []).map((t) => (t.id === id ? { ...t, naam: nieuweNaam } : t)) }));
+        } else if (categorie === 'ingredienten') {
+          await db.renameIngredient(id, nieuweNaam);
+          state.ingredients = state.ingredients.map((i) => (i.id === id ? { ...i, naam: nieuweNaam } : i)).sort((a, b) => a.naam.localeCompare(b.naam));
+          state.recipes = state.recipes.map((r) => ({
+            ...r,
+            onderdelen: (r.onderdelen || []).map((o) => ({
+              ...o,
+              ingredienten: o.ingredienten.map((ing) => (ing.ingredientId === id ? { ...ing, naam: nieuweNaam } : ing))
+            }))
+          }));
         } else {
           const oud = state.kenmerkOpties[categorie].find((k) => k.id === id);
           const oudeNaam = oud ? oud.naam : null;
@@ -1174,6 +1279,35 @@ async function handleAction(action, el) {
       break;
     }
 
+    case 'manage-merge-start':
+      state.modal.mergeId = el.dataset.id;
+      rerender();
+      break;
+
+    case 'manage-merge-cancel':
+      state.modal.mergeId = null;
+      rerender();
+      break;
+
+    case 'manage-merge-save': {
+      const vanId = el.dataset.id;
+      const select = document.getElementById('merge-target-select');
+      const naarId = select && select.value;
+      if (!naarId) break;
+      try {
+        await db.mergeIngredients(vanId, naarId);
+        state.ingredients = state.ingredients.filter((i) => i.id !== vanId);
+        state.recipes = await db.fetchRecipes();
+        state.modal.mergeId = null;
+        state.modal.error = '';
+        rerender();
+      } catch (err) {
+        state.modal.error = (err && err.message) || 'Samenvoegen mislukt.';
+        rerender();
+      }
+      break;
+    }
+
     case 'manage-delete': {
       const id = el.dataset.id;
       const naam = el.dataset.naam;
@@ -1181,13 +1315,18 @@ async function handleAction(action, el) {
       state.confirm = {
         message: categorie === 'tags'
           ? `Tag "${naam}" verwijderen? Dit haalt hem ook weg bij recepten die hem gebruiken.`
-          : `"${naam}" verwijderen?`,
+          : categorie === 'ingredienten'
+            ? `Ingrediënt "${naam}" verwijderen?`
+            : `"${naam}" verwijderen?`,
         onConfirm: async () => {
           try {
             if (categorie === 'tags') {
               await db.deleteTag(id);
               state.tags = state.tags.filter((t) => t.id !== id);
               state.recipes = state.recipes.map((r) => ({ ...r, tags: (r.tags || []).filter((t) => t.id !== id) }));
+            } else if (categorie === 'ingredienten') {
+              await db.deleteIngredient(id);
+              state.ingredients = state.ingredients.filter((i) => i.id !== id);
             } else {
               await db.deleteKenmerkOptie(id, categorie, naam);
               state.kenmerkOpties[categorie] = state.kenmerkOpties[categorie].filter((k) => k.id !== id);

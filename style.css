@@ -85,6 +85,8 @@ main { padding: 24px 0 80px; }
   border-radius: 14px;
 }
 
+.onderdeel-block { background: var(--paper); }
+
 /* ── Buttons ────────────────────────────────────────── */
 .btn {
   border-radius: 10px;

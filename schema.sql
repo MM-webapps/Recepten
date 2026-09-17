@@ -14,8 +14,6 @@ create table if not exists recipes (
   keuken         text not null default 'Overig',
   personen       integer not null default 4,
   bereidingstijd integer not null default 30,
-  ingredienten   jsonb not null default '[]'::jsonb,
-  instructies    jsonb not null default '[]'::jsonb,
   bron           text default '',
   aangemaakt     timestamptz not null default now()
 );
@@ -93,6 +91,115 @@ create table if not exists notities (
   aangemaakt  timestamptz not null default now()
 );
 
+-- ───────────────────────────────────────────── Ingrediënten (canoniek)
+-- Eén vast record per product (bv. "ui"), zodat de boodschappenlijst kan
+-- optellen op ingredient_id in plaats van op los getypte tekst.
+create table if not exists ingredients (
+  id                uuid primary key default gen_random_uuid(),
+  naam              text not null,
+  standaard_eenheid text
+);
+create unique index if not exists ingredients_naam_lower_idx on ingredients ((lower(trim(naam))));
+
+-- Bijnamen die naar een canoniek ingrediënt verwijzen (bv. "rode ui" → "ui").
+create table if not exists ingredient_aliassen (
+  id             uuid primary key default gen_random_uuid(),
+  ingredient_id  uuid not null references ingredients(id) on delete cascade,
+  alias          text not null
+);
+create unique index if not exists ingredient_aliassen_alias_lower_idx on ingredient_aliassen ((lower(trim(alias))));
+
+-- ───────────────────────────────────────────── Onderdelen binnen een recept
+-- Een gewoon recept heeft één onderdeel zonder naam. Een samengesteld
+-- recept (bv. "Marinade" + "Saus") heeft er meerdere, elk met eigen
+-- ingrediënten én eigen instructies.
+create table if not exists recipe_onderdelen (
+  id           uuid primary key default gen_random_uuid(),
+  recipe_id    uuid not null references recipes(id) on delete cascade,
+  naam         text not null default '',
+  volgorde     integer not null default 1,
+  instructies  jsonb not null default '[]'::jsonb
+);
+
+create table if not exists recipe_ingredienten (
+  id             uuid primary key default gen_random_uuid(),
+  onderdeel_id   uuid not null references recipe_onderdelen(id) on delete cascade,
+  ingredient_id  uuid not null references ingredients(id),
+  hoeveelheid    numeric,
+  eenheid        text,
+  notitie        text,
+  volgorde       integer not null default 1
+);
+
+-- ───────────────────────────────────────────── Eenmalige migratie
+-- Zet bestaande recepten (met de oude platte kolommen recipes.ingredienten
+-- / recipes.instructies) om naar de nieuwe structuur hierboven. Draait
+-- vanzelf maar één keer: zodra de oude kolommen zijn hernoemd naar
+-- "_legacy", doet dit blok bij een volgende run niets meer (veilig om
+-- schema.sql te blijven herplakken).
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_name = 'recipes' and column_name = 'ingredienten'
+  ) then
+
+    -- (a) elk recept krijgt één onderdeel zonder naam, met de bestaande instructies
+    insert into recipe_onderdelen (recipe_id, naam, volgorde, instructies)
+    select r.id, '', 1, coalesce(r.instructies, '[]'::jsonb)
+    from recipes r
+    where not exists (select 1 from recipe_onderdelen ro where ro.recipe_id = r.id);
+
+    -- (b) van elke voorkomende ingrediënt-tekst een canoniek ingrediënt maken
+    insert into ingredients (naam)
+    select distinct trim(elem->>'naam')
+    from recipes r, jsonb_array_elements(coalesce(r.ingredienten, '[]'::jsonb)) elem
+    where trim(coalesce(elem->>'naam', '')) <> ''
+    on conflict ((lower(trim(naam)))) do nothing;
+
+    -- (c) de eenheidsnotatie normaliseren en de ingrediëntregels aanmaken
+    insert into recipe_ingredienten (onderdeel_id, ingredient_id, hoeveelheid, eenheid, volgorde)
+    select
+      ro.id,
+      ing.id,
+      nullif(t.elem->>'hoeveelheid', '')::numeric,
+      case lower(trim(coalesce(t.elem->>'eenheid', '')))
+        when 'gram'       then 'g'
+        when 'grammen'    then 'g'
+        when 'gr'         then 'g'
+        when 'kilogram'   then 'kg'
+        when 'kilo'       then 'kg'
+        when 'milliliter' then 'ml'
+        when 'liter'      then 'l'
+        when 'ltr'        then 'l'
+        when 'eetlepel'   then 'el'
+        when 'eetlepels'  then 'el'
+        when 'theelepel'  then 'tl'
+        when 'theelepels' then 'tl'
+        when 'stuk'       then 'stuks'
+        when 'teen'       then 'teentje'
+        when 'teentjes'   then 'teentje'
+        when 'snuf'       then 'snufje'
+        when 'snufjes'    then 'snufje'
+        when 'blik'       then 'blikje'
+        when 'blikjes'    then 'blikje'
+        else lower(trim(coalesce(t.elem->>'eenheid', '')))
+      end,
+      t.ord
+    from recipes r
+    join recipe_onderdelen ro on ro.recipe_id = r.id and ro.naam = ''
+    cross join lateral jsonb_array_elements(coalesce(r.ingredienten, '[]'::jsonb)) with ordinality as t(elem, ord)
+    join ingredients ing on lower(trim(ing.naam)) = lower(trim(t.elem->>'naam'))
+    where trim(coalesce(t.elem->>'naam', '')) <> ''
+      and not exists (select 1 from recipe_ingredienten ri where ri.onderdeel_id = ro.id);
+
+    -- (d) oude kolommen bewaren als back-up, de app gebruikt ze niet meer
+    alter table recipes rename column ingredienten to ingredienten_legacy;
+    alter table recipes rename column instructies to instructies_legacy;
+
+  end if;
+end $$;
+
 -- ───────────────────────────────────────────── Row Level Security
 -- Geen login gekozen → open policies, zodat de site met alleen de
 -- anon-key kan lezen/schrijven. Zie README.md voor het beveiligingsaspect.
@@ -105,6 +212,10 @@ alter table kenmerk_opties enable row level security;
 alter table tags enable row level security;
 alter table recipe_tags enable row level security;
 alter table notities enable row level security;
+alter table ingredients enable row level security;
+alter table ingredient_aliassen enable row level security;
+alter table recipe_onderdelen enable row level security;
+alter table recipe_ingredienten enable row level security;
 
 drop policy if exists "recipes_open" on recipes;
 create policy "recipes_open" on recipes for all using (true) with check (true);
@@ -129,3 +240,15 @@ create policy "recipe_tags_open" on recipe_tags for all using (true) with check 
 
 drop policy if exists "notities_open" on notities;
 create policy "notities_open" on notities for all using (true) with check (true);
+
+drop policy if exists "ingredients_open" on ingredients;
+create policy "ingredients_open" on ingredients for all using (true) with check (true);
+
+drop policy if exists "ingredient_aliassen_open" on ingredient_aliassen;
+create policy "ingredient_aliassen_open" on ingredient_aliassen for all using (true) with check (true);
+
+drop policy if exists "recipe_onderdelen_open" on recipe_onderdelen;
+create policy "recipe_onderdelen_open" on recipe_onderdelen for all using (true) with check (true);
+
+drop policy if exists "recipe_ingredienten_open" on recipe_ingredienten;
+create policy "recipe_ingredienten_open" on recipe_ingredienten for all using (true) with check (true);
