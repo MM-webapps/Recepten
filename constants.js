@@ -18,6 +18,8 @@ export const DEFAULT_KEUKEN_OPTIONS = [
   'Mexicaans', 'Indiaas', 'Midden-Oosters', 'Overig'
 ];
 
+export const DEFAULT_EENHEDEN = ['g', 'kg', 'ml', 'l', 'el', 'tl', 'stuks', 'teentje', 'snufje', 'blikje'];
+
 export const DAGEN = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
 
 export const DAG_NAMEN = {

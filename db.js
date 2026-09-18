@@ -7,7 +7,7 @@
 // bij een herlaad van de pagina).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
-import { DEFAULT_BASIS_OPTIONS, DEFAULT_PROTEINE_OPTIONS, DEFAULT_KEUKEN_OPTIONS } from './constants.js';
+import { DEFAULT_BASIS_OPTIONS, DEFAULT_PROTEINE_OPTIONS, DEFAULT_KEUKEN_OPTIONS, DEFAULT_EENHEDEN } from './constants.js';
 import { normalizeEenheid } from './utils.js';
 
 export const DEMO_MODE =
@@ -103,7 +103,7 @@ const demoSeedRecipes = [
         { naam: 'Gehakt', hoeveelheid: 400, eenheid: 'g' },
         { naam: 'Gezeefde tomaten', hoeveelheid: 700, eenheid: 'ml' },
         { naam: 'Ui', hoeveelheid: 1, eenheid: '' },
-        { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'tenen' }
+        { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'teentje' }
       ],
       instructies: [
         'Fruit ui en knoflook aan.',
@@ -123,7 +123,7 @@ const demoSeedRecipes = [
           { naam: 'Kipfilet', hoeveelheid: 500, eenheid: 'g' },
           { naam: 'Yoghurt', hoeveelheid: 150, eenheid: 'g' },
           { naam: 'Kerriepoeder', hoeveelheid: 1, eenheid: 'el' },
-          { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'tenen' }
+          { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'teentje' }
         ],
         instructies: [
           'Meng de yoghurt met kerriepoeder en geperste knoflook.',
@@ -171,6 +171,8 @@ let demoKenmerkOpties = [
   ...DEFAULT_PROTEINE_OPTIONS.map((naam, i) => ({ id: uuid(), categorie: 'proteine', naam, volgorde: i + 1 })),
   ...DEFAULT_KEUKEN_OPTIONS.map((naam, i) => ({ id: uuid(), categorie: 'keuken', naam, volgorde: i + 1 }))
 ];
+
+let demoEenheden = DEFAULT_EENHEDEN.map((naam, i) => ({ id: uuid(), naam, volgorde: i + 1 }));
 
 let demoTags = [
   { id: uuid(), naam: 'Grote groepen' },
@@ -428,6 +430,59 @@ export async function deleteKenmerkOptie(id, categorie, naam) {
   check(cErr);
   if (count && count > 0) throw new Error(`Kan "${naam}" niet verwijderen: nog in gebruik bij ${count} recept(en).`);
   const { error } = await supabase.from('kenmerk_opties').delete().eq('id', id);
+  check(error);
+}
+
+// ─────────────────────────────── Eenheden (keuzelijst voor het formulier)
+export async function fetchEenheden() {
+  if (DEMO_MODE) return demoEenheden.slice().sort((a, b) => a.volgorde - b.volgorde || a.naam.localeCompare(b.naam));
+  const { data, error } = await supabase.from('eenheden').select('*').order('volgorde').order('naam');
+  check(error);
+  return data;
+}
+
+export async function addEenheid(naam) {
+  if (DEMO_MODE) {
+    const row = { id: uuid(), naam: naam.trim(), volgorde: demoEenheden.length + 1 };
+    demoEenheden.push(row);
+    return row;
+  }
+  const { data, error } = await supabase.from('eenheden').insert({ naam: naam.trim() }).select().single();
+  check(error);
+  return data;
+}
+
+// Hernoemen werkt door naar bestaande receptregels die deze eenheid gebruiken.
+export async function renameEenheid(id, oudeNaam, nieuweNaam) {
+  if (DEMO_MODE) {
+    demoEenheden = demoEenheden.map((e) => (e.id === id ? { ...e, naam: nieuweNaam } : e));
+    demoRecipes = demoRecipes.map((r) => ({
+      ...r,
+      onderdelen: (r.onderdelen || []).map((o) => ({
+        ...o,
+        ingredienten: o.ingredienten.map((ing) => (ing.eenheid === oudeNaam ? { ...ing, eenheid: nieuweNaam } : ing))
+      }))
+    }));
+    return;
+  }
+  const { error } = await supabase.from('eenheden').update({ naam: nieuweNaam }).eq('id', id);
+  check(error);
+  const { error: err2 } = await supabase.from('recipe_ingredienten').update({ eenheid: nieuweNaam }).eq('eenheid', oudeNaam);
+  check(err2);
+}
+
+// Verwijderen mag alleen als geen enkele receptregel deze eenheid nog gebruikt.
+export async function deleteEenheid(id, naam) {
+  if (DEMO_MODE) {
+    const inUse = demoRecipes.some((r) => alleIngredientenDemo(r).some((ing) => ing.eenheid === naam));
+    if (inUse) throw new Error(`Kan "${naam}" niet verwijderen: nog in gebruik bij een of meer receptregels.`);
+    demoEenheden = demoEenheden.filter((e) => e.id !== id);
+    return;
+  }
+  const { count, error: cErr } = await supabase.from('recipe_ingredienten').select('id', { count: 'exact', head: true }).eq('eenheid', naam);
+  check(cErr);
+  if (count && count > 0) throw new Error(`Kan "${naam}" niet verwijderen: nog in gebruik bij ${count} receptregel(s).`);
+  const { error } = await supabase.from('eenheden').delete().eq('id', id);
   check(error);
 }
 

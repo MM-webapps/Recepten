@@ -16,10 +16,11 @@ export function normName(s) {
 }
 
 // ─────────────────────────────── Eenheden normaliseren
-// Canonieke eenheden die de app gebruikt — dit is ook de lijst die in het
-// formulier als keuzelijst verschijnt.
-export const EENHEID_OPTIES = ['', 'g', 'kg', 'ml', 'l', 'el', 'tl', 'stuks', 'tenen', 'snufje', 'blikje','cm'];
-
+// De keuzelijst met eenheden zelf staat niet meer hier, maar in Supabase
+// (tabel "eenheden", beheerbaar via de app). Deze aliassen zijn een losse,
+// vaste vangnet-normalisatie voor tekst die uit een JSON-import komt (bv.
+// van een AI die "gram" typt in plaats van "g") — onafhankelijk van welke
+// eenheden je op dit moment beheert.
 const EENHEID_ALIASSEN = {
   'gram': 'g', 'grammen': 'g', 'gr': 'g',
   'kilogram': 'kg', 'kilo': 'kg',
@@ -28,14 +29,14 @@ const EENHEID_ALIASSEN = {
   'eetlepel': 'el', 'eetlepels': 'el', 'tbsp': 'el',
   'theelepel': 'tl', 'theelepels': 'tl', 'tsp': 'tl',
   'stuk': 'stuks', 'stk': 'stuks',
-  'tenen': 'teentje', 'teentjes': 'tenen',
+  'teen': 'teentje', 'teentjes': 'teentje',
   'snuf': 'snufje', 'snufjes': 'snufje',
   'blik': 'blikje', 'blikjes': 'blikje'
 };
 
-// Zet "gr"/"gram"/"Gram" allemaal om naar dezelfde canonieke schrijfwijze
-// ("g"), zodat de boodschappenlijst dezelfde eenheid herkent. Onbekende
-// eenheden worden alleen getrimd/lowercase gemaakt, niet weggegooid.
+// Zet "gr"/"gram"/"Gram" allemaal om naar dezelfde schrijfwijze ("g").
+// Onbekende eenheden worden alleen getrimd/lowercase gemaakt, niet
+// weggegooid.
 export function normalizeEenheid(input) {
   const clean = (input || '').toLowerCase().trim();
   if (!clean) return '';

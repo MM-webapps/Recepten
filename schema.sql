@@ -131,6 +131,21 @@ create table if not exists recipe_ingredienten (
   volgorde       integer not null default 1
 );
 
+-- ───────────────────────────────────────────── Eenheden (beheerbaar)
+-- De keuzelijst met eenheden voor het receptformulier. "eenheid" op
+-- recipe_ingredienten blijft gewoon tekst (net als basis/proteine/keuken) —
+-- hernoemen hieronder werkt daarom automatisch door naar bestaande regels.
+create table if not exists eenheden (
+  id        uuid primary key default gen_random_uuid(),
+  naam      text not null unique,
+  volgorde  integer not null default 0
+);
+
+insert into eenheden (naam, volgorde) values
+  ('g', 1), ('kg', 2), ('ml', 3), ('l', 4), ('el', 5), ('tl', 6),
+  ('stuks', 7), ('teentje', 8), ('snufje', 9), ('blikje', 10)
+on conflict (naam) do nothing;
+
 -- ───────────────────────────────────────────── Eenmalige migratie
 -- Zet bestaande recepten (met de oude platte kolommen recipes.ingredienten
 -- / recipes.instructies) om naar de nieuwe structuur hierboven. Draait
@@ -177,8 +192,8 @@ begin
         when 'theelepel'  then 'tl'
         when 'theelepels' then 'tl'
         when 'stuk'       then 'stuks'
-        when 'teen'       then 'tenen'
-        when 'teentjes'   then 'tenen'
+        when 'teen'       then 'teentje'
+        when 'teentjes'   then 'teentje'
         when 'snuf'       then 'snufje'
         when 'snufjes'    then 'snufje'
         when 'blik'       then 'blikje'
@@ -216,6 +231,7 @@ alter table ingredients enable row level security;
 alter table ingredient_aliassen enable row level security;
 alter table recipe_onderdelen enable row level security;
 alter table recipe_ingredienten enable row level security;
+alter table eenheden enable row level security;
 
 drop policy if exists "recipes_open" on recipes;
 create policy "recipes_open" on recipes for all using (true) with check (true);
@@ -252,3 +268,6 @@ create policy "recipe_onderdelen_open" on recipe_onderdelen for all using (true)
 
 drop policy if exists "recipe_ingredienten_open" on recipe_ingredienten;
 create policy "recipe_ingredienten_open" on recipe_ingredienten for all using (true) with check (true);
+
+drop policy if exists "eenheden_open" on eenheden;
+create policy "eenheden_open" on eenheden for all using (true) with check (true);

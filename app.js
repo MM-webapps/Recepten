@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { DEMO_MODE } from './db.js';
 import { DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
-import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, EENHEID_OPTIES, alleIngredienten } from './utils.js';
+import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten } from './utils.js';
 
 const state = {
   loaded: false,
@@ -12,6 +12,7 @@ const state = {
   kenmerkOpties: { basis: [], proteine: [], keuken: [] },
   tags: [],
   ingredients: [],
+  eenheden: [],
   activeTab: 'recepten',
   filters: { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' },
   pickerSortFridge: false,
@@ -45,9 +46,9 @@ async function init() {
   root.innerHTML = renderLoading();
   hydrateIcons();
   try {
-    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients] = await Promise.all([
+    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients, eenheden] = await Promise.all([
       db.fetchRecipes(), db.fetchWeekmenu(), db.fetchKoelkast(), db.fetchInstellingen(),
-      db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients()
+      db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients(), db.fetchEenheden()
     ]);
     state.recipes = recipes;
     state.weekmenu = weekmenu;
@@ -60,6 +61,7 @@ async function init() {
     };
     state.tags = tags;
     state.ingredients = ingredients;
+    state.eenheden = eenheden;
     state.loaded = true;
     rerender();
   } catch (e) {
@@ -86,7 +88,7 @@ function renderLoading() {
   return `<div style="min-height:60vh;display:flex;align-items:center;justify-content:center">
     <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
       ${icon('loader-2', 'spin')}
-      <span class="text-sm text-soft">MMenu-Planner wordt geladen...</span>
+      <span class="text-sm text-soft">Receptenkist wordt geladen...</span>
     </div>
   </div>`;
 }
@@ -161,7 +163,7 @@ function renderHeaderNav() {
   return `
     <div class="header">
       <div class="wrap header-top">
-        <div class="brand">${icon('chef-hat')}<span class="display">MMenu-Planner</span></div>
+        <div class="brand">${icon('chef-hat')}<span class="display">Receptenkist</span></div>
         <div class="flex gap-2">
           <button class="btn btn-outline btn-sm" data-action="open-manage">${icon('settings')} Beheren</button>
           <button class="btn btn-primary btn-sm" data-action="open-add">${icon('plus')} Nieuw recept</button>
@@ -443,13 +445,20 @@ function renderShopSection(title, items, checked, muted) {
 }
 
 // ─────────────────────────────────────────── Receptformulier (nieuw & bewerken)
+function eenheidOptiesHtml(huidigeWaarde) {
+  const namen = state.eenheden.map((e) => e.naam);
+  const extra = huidigeWaarde && !namen.includes(huidigeWaarde) ? [huidigeWaarde] : [];
+  const alle = ['', ...namen, ...extra];
+  return alle.map((e) => `<option value="${escapeHtml(e)}" ${e === (huidigeWaarde || '') ? 'selected' : ''}>${e ? escapeHtml(e) : '(geen)'}</option>`).join('');
+}
+
 function ingredientRowHtml(ing) {
   ing = ing || {};
   return `
     <div class="ing-row">
       <input class="input naam" list="ingredient-namen" placeholder="Ingrediënt" value="${escapeHtml(ing.naam || '')}">
       <input class="input aantal" type="number" step="any" placeholder="aantal" value="${ing.hoeveelheid != null ? ing.hoeveelheid : ''}">
-      <select class="input eenheid">${EENHEID_OPTIES.map((e) => `<option value="${e}" ${e === (ing.eenheid || '') ? 'selected' : ''}>${e || '(geen)'}</option>`).join('')}</select>
+      <select class="input eenheid">${eenheidOptiesHtml(ing.eenheid || '')}</select>
       <button type="button" class="btn btn-outline btn-icon" data-action="remove-ing-row">${icon('x')}</button>
     </div>
   `;
@@ -828,10 +837,12 @@ function renderManageModal() {
     { key: 'proteine', label: 'Proteïne' },
     { key: 'keuken', label: 'Keuken' },
     { key: 'tags', label: 'Tags' },
-    { key: 'ingredienten', label: 'Ingrediënten' }
+    { key: 'ingredienten', label: 'Ingrediënten' },
+    { key: 'eenheden', label: 'Eenheden' }
   ];
   const items = m.categorie === 'tags' ? state.tags
     : m.categorie === 'ingredienten' ? state.ingredients
+    : m.categorie === 'eenheden' ? state.eenheden
     : state.kenmerkOpties[m.categorie];
   return `
     <div class="modal-backdrop">
@@ -849,7 +860,7 @@ function renderManageModal() {
           ${items.length === 0 ? `<p class="text-sm text-soft">Nog niets toegevoegd.</p>` : items.map((it) => (m.categorie === 'ingredienten' ? renderIngredientRow(it, m) : renderManageRow(it, m))).join('')}
         </div>
         <div class="flex gap-2">
-          <input id="manage-new-item" class="input" style="flex:1" placeholder="Nieuwe ${m.categorie === 'tags' ? 'tag' : m.categorie === 'ingredienten' ? 'ingrediënt' : 'optie'}...">
+          <input id="manage-new-item" class="input" style="flex:1" placeholder="Nieuwe ${m.categorie === 'tags' ? 'tag' : m.categorie === 'ingredienten' ? 'ingrediënt' : m.categorie === 'eenheden' ? 'eenheid' : 'optie'}...">
           <button class="btn btn-primary btn-sm" data-action="manage-add">${icon('plus')} Toevoegen</button>
         </div>
       </div>
@@ -1218,6 +1229,9 @@ async function handleAction(action, el) {
         } else if (categorie === 'ingredienten') {
           const row = await db.addIngredient(naam);
           state.ingredients = [...state.ingredients, row].sort((a, b) => a.naam.localeCompare(b.naam));
+        } else if (categorie === 'eenheden') {
+          const row = await db.addEenheid(naam);
+          state.eenheden = [...state.eenheden, row];
         } else {
           const row = await db.addKenmerkOptie(categorie, naam);
           state.kenmerkOpties[categorie] = [...state.kenmerkOpties[categorie], row];
@@ -1262,6 +1276,20 @@ async function handleAction(action, el) {
               ingredienten: o.ingredienten.map((ing) => (ing.ingredientId === id ? { ...ing, naam: nieuweNaam } : ing))
             }))
           }));
+        } else if (categorie === 'eenheden') {
+          const oud = state.eenheden.find((e) => e.id === id);
+          const oudeNaam = oud ? oud.naam : null;
+          await db.renameEenheid(id, oudeNaam, nieuweNaam);
+          state.eenheden = state.eenheden.map((e) => (e.id === id ? { ...e, naam: nieuweNaam } : e));
+          if (oudeNaam) {
+            state.recipes = state.recipes.map((r) => ({
+              ...r,
+              onderdelen: (r.onderdelen || []).map((o) => ({
+                ...o,
+                ingredienten: o.ingredienten.map((ing) => (ing.eenheid === oudeNaam ? { ...ing, eenheid: nieuweNaam } : ing))
+              }))
+            }));
+          }
         } else {
           const oud = state.kenmerkOpties[categorie].find((k) => k.id === id);
           const oudeNaam = oud ? oud.naam : null;
@@ -1327,6 +1355,9 @@ async function handleAction(action, el) {
             } else if (categorie === 'ingredienten') {
               await db.deleteIngredient(id);
               state.ingredients = state.ingredients.filter((i) => i.id !== id);
+            } else if (categorie === 'eenheden') {
+              await db.deleteEenheid(id, naam);
+              state.eenheden = state.eenheden.filter((e) => e.id !== id);
             } else {
               await db.deleteKenmerkOptie(id, categorie, naam);
               state.kenmerkOpties[categorie] = state.kenmerkOpties[categorie].filter((k) => k.id !== id);

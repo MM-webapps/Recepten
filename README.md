@@ -138,6 +138,30 @@ toe:
   oude kolommen al hernoemd zijn en slaat het de migratie over. Gewoon het
   hele bestand blijven herplakken is dus nog steeds veilig.
 
+## 7. Nieuw: eenheden beheren
+
+De keuzelijst met eenheden (g, kg, ml, l, el, tl, stuks, teentje, snufje,
+blikje) staat niet meer vast in de code, maar in Supabase, en is te
+beheren via **Beheren → Eenheden**: toevoegen, hernoemen (werkt automatisch
+door naar alle receptregels die die eenheid gebruiken) en verwijderen
+(alleen als niets die eenheid meer gebruikt). Wil je bijvoorbeeld
+"teentje" naar "tenen" hernoemen, dan kan dat daar.
+
+Let op één detail: bij een JSON-import (via de AI-prompt) blijft een kleine
+vaste lijst met veelgebruikte schrijfwijzen bestaan (zoals "gram" → "g",
+"theelepel" → "tl"), onafhankelijk van wat je hierboven beheert. Hernoem je
+een eenheid, dan werkt dat meteen door in je bestaande recepten en in de
+keuzelijst van het formulier — een AI-import die toevallig de oude
+schrijfwijze gebruikt, komt er in het ergste geval gewoon als extra,
+niet-beheerde waarde bij te staan (niets gaat verloren, het valt alleen
+niet automatisch samen met je hernoemde eenheid). Wil je dat ook helemaal
+sluitend maken, laat het weten.
+
+**Voor deze update moet je `schema.sql` opnieuw draaien in Supabase**
+(gewoon het hele bestand opnieuw plakken en Run — dit voegt alleen de
+nieuwe tabel `eenheden` toe, met de huidige lijst er al in; niets anders
+verandert).
+
 ## Beveiliging — belangrijk om te weten
 
 Je hebt gekozen voor **geen login**. Dat betekent:
