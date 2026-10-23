@@ -190,3 +190,14 @@ Je hebt gekozen voor **geen login**. Dat betekent:
 | `app.js`         | De applicatie zelf: state, rendering, events                    |
 | `schema.sql`      | Het hele Supabase-schema, in één keer te runnen                |
 | `ai-prompt.md`   | Prompt om recepten met een AI-tool naar het juiste JSON-formaat om te zetten |
+
+## Volgorde aanpassen (Beheren)
+
+In **Beheren** kun je bij Basis, Proteïne, Keuken, Tags, Ingrediënten en
+Eenheden het handvat links van een regel vasthouden en omhoog/omlaag
+slepen (werkt met muis en met je vinger). De volgorde geldt overal, ook in
+de keuzelijsten. Nieuwe items komen onderaan.
+
+**Voor deze update moet je `schema.sql` opnieuw draaien in Supabase** (hele
+bestand plakken, Run): het voegt een `volgorde`-kolom toe aan `tags` en
+`ingredients` en nummert bestaande rijen eenmalig op alfabet.

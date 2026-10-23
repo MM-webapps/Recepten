@@ -300,3 +300,8 @@ textarea.input { resize: vertical; }
   * { transition: none !important; animation: none !important; }
 }
 .week-titel:hover { text-decoration: underline; }
+
+/* Slepen in Beheren */
+.drag-handle { display: inline-flex; align-items: center; padding: 6px 4px; cursor: grab; color: var(--ink-soft); touch-action: none; user-select: none; -webkit-user-select: none; }
+.drag-handle:active { cursor: grabbing; }
+.manage-row.dragging { background: rgba(0, 0, 0, 0.05); box-shadow: 0 4px 14px rgba(30, 39, 31, 0.15); border-radius: 8px; }

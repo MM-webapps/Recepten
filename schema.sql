@@ -146,6 +146,44 @@ insert into eenheden (naam, volgorde) values
   ('stuks', 7), ('teentje', 8), ('snufje', 9), ('blikje', 10)
 on conflict (naam) do nothing;
 
+-- ───────────────────────────────────────────── Volgorde (slepen in Beheren)
+-- tags en ingredients krijgen een volgorde-kolom (kenmerk_opties en eenheden
+-- hadden die al). Rijen met volgorde 0 (bestaand of nieuw uit een oude
+-- versie) worden eenmalig achteraan genummerd, op alfabet. Veilig om opnieuw
+-- te draaien: er wordt alleen iets aangepast aan rijen met volgorde 0.
+alter table tags        add column if not exists volgorde integer not null default 0;
+alter table ingredients add column if not exists volgorde integer not null default 0;
+
+update tags t set volgorde = s.nr
+from (
+  select id, (select coalesce(max(volgorde), 0) from tags) + row_number() over (order by lower(naam)) as nr
+  from tags where volgorde = 0
+) s
+where t.id = s.id;
+
+update ingredients i set volgorde = s.nr
+from (
+  select id, (select coalesce(max(volgorde), 0) from ingredients) + row_number() over (order by lower(naam)) as nr
+  from ingredients where volgorde = 0
+) s
+where i.id = s.id;
+
+update eenheden e set volgorde = s.nr
+from (
+  select id, (select coalesce(max(volgorde), 0) from eenheden) + row_number() over (order by lower(naam)) as nr
+  from eenheden where volgorde = 0
+) s
+where e.id = s.id;
+
+update kenmerk_opties k set volgorde = s.nr
+from (
+  select k0.id,
+         (select coalesce(max(k2.volgorde), 0) from kenmerk_opties k2 where k2.categorie = k0.categorie)
+           + row_number() over (partition by k0.categorie order by lower(k0.naam)) as nr
+  from kenmerk_opties k0 where k0.volgorde = 0
+) s
+where k.id = s.id;
+
 -- ───────────────────────────────────────────── Eenmalige migratie
 -- Zet bestaande recepten (met de oude platte kolommen recipes.ingredienten
 -- / recipes.instructies) om naar de nieuwe structuur hierboven. Draait

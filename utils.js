@@ -51,6 +51,13 @@ export function alleIngredienten(recipe) {
   return (recipe.onderdelen || []).flatMap((o) => o.ingredienten || []);
 }
 
+// Exacte match: alleen als de genormaliseerde namen (kleine letters, zonder
+// accenten, getrimd) gelijk zijn. "kip" matcht dus niet op "kipgehakt".
+function inKoelkast(naam, fridgeNorm) {
+  const n = normName(naam);
+  return !!n && fridgeNorm.some((f) => f && f === n);
+}
+
 // Hoeveel van de ingrediënten van een recept staan al in de koelkast-lijst?
 export function fridgeMatchForRecipe(recipe, fridgeItems) {
   const fridgeNorm = fridgeItems.map(normName);
@@ -60,8 +67,7 @@ export function fridgeMatchForRecipe(recipe, fridgeItems) {
   let matched = 0;
   const missing = [];
   ingredienten.forEach((ing) => {
-    const n = normName(ing.naam);
-    const hit = fridgeNorm.some((f) => f && (n.includes(f) || f.includes(n)));
+    const hit = inKoelkast(ing.naam, fridgeNorm);
     if (hit) matched++; else missing.push(ing.naam);
   });
   return { matched, total, pct: Math.round((matched / total) * 100), missing };
@@ -90,19 +96,26 @@ export function buildShoppingList(weekmenu, recipes, fridgeItems) {
       const hoeveelheid = (typeof ing.hoeveelheid === 'number' && !isNaN(ing.hoeveelheid))
         ? ing.hoeveelheid * factor : null;
       if (!agg[key]) {
-        agg[key] = { key, naam: ing.naam, eenheid, hoeveelheid };
+        agg[key] = { key, naam: ing.naam, eenheid, hoeveelheid, bronnen: [] };
       } else if (hoeveelheid !== null) {
         agg[key].hoeveelheid = (agg[key].hoeveelheid || 0) + hoeveelheid;
+      }
+      // Per-bron uitsplitsing: welk recept/welke dag levert hoeveel.
+      const bron = agg[key].bronnen.find((b) => b.dag === dag);
+      if (bron) {
+        if (hoeveelheid !== null) bron.hoeveelheid = (bron.hoeveelheid || 0) + hoeveelheid;
+      } else {
+        agg[key].bronnen.push({ dag, recipeId: recipe.id, titel: recipe.titel, hoeveelheid });
       }
     });
   });
   const fridgeNorm = fridgeItems.map(normName);
   return Object.values(agg)
     .map((item) => {
-      const n = normName(item.naam);
-      const inHuis = fridgeNorm.some((f) => f && (n.includes(f) || f.includes(n)));
+      const inHuis = inKoelkast(item.naam, fridgeNorm);
       return {
         ...item,
+        bronnen: item.bronnen.map((b) => ({ ...b, hoeveelheid: b.hoeveelheid !== null ? Math.round(b.hoeveelheid * 100) / 100 : null })),
         hoeveelheid: item.hoeveelheid !== null ? Math.round(item.hoeveelheid * 100) / 100 : null,
         inHuis
       };

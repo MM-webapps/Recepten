@@ -28,6 +28,39 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Volgende volgorde-waarde (achteraan) voor een tabel, optioneel binnen een
+// categorie. Nieuwe items komen zo onderaan de lijst in Beheren.
+async function nextVolgorde(table, filter) {
+  let q = supabase.from(table).select('volgorde').order('volgorde', { ascending: false }).limit(1);
+  if (filter) q = q.eq(filter.kolom, filter.waarde);
+  const { data, error } = await q;
+  check(error);
+  return data && data.length ? (data[0].volgorde || 0) + 1 : 1;
+}
+
+function maxVolgorde(lijst) {
+  return lijst.reduce((m, x) => Math.max(m, x.volgorde || 0), 0);
+}
+
+const byVolgorde = (a, b) => (a.volgorde || 0) - (b.volgorde || 0) || a.naam.localeCompare(b.naam);
+
+// Slaat een nieuwe volgorde op. "rows" bevat alleen de gewijzigde items:
+// [{ id, volgorde }, ...]. Tabelnaam komt uit een vaste lijst.
+const ORDERABLE = ['tags', 'ingredients', 'eenheden', 'kenmerk_opties'];
+export async function reorderItems(table, rows) {
+  if (!ORDERABLE.includes(table)) throw new Error('Onbekende tabel.');
+  if (DEMO_MODE) {
+    const patch = (lijst) => lijst.map((x) => { const r = rows.find((y) => y.id === x.id); return r ? { ...x, volgorde: r.volgorde } : x; });
+    if (table === 'tags') demoTags = patch(demoTags);
+    else if (table === 'ingredients') demoIngredients = patch(demoIngredients);
+    else if (table === 'eenheden') demoEenheden = patch(demoEenheden);
+    else demoKenmerkOpties = patch(demoKenmerkOpties);
+    return;
+  }
+  const results = await Promise.all(rows.map((r) => supabase.from(table).update({ volgorde: r.volgorde }).eq('id', r.id)));
+  results.forEach((res) => check(res.error));
+}
+
 // ─────────────────────────────── Demo-data (alleen gebruikt in demo-modus)
 let demoIngredients = [];
 let demoIngredientAliassen = [];
@@ -41,7 +74,7 @@ function demoResolveIngredient(naam) {
     if (alias) found = demoIngredients.find((i) => i.id === alias.ingredient_id);
   }
   if (!found) {
-    found = { id: uuid(), naam: clean, standaard_eenheid: null };
+    found = { id: uuid(), naam: clean, standaard_eenheid: null, volgorde: maxVolgorde(demoIngredients) + 1 };
     demoIngredients.push(found);
   }
   return found;
@@ -175,8 +208,8 @@ let demoKenmerkOpties = [
 let demoEenheden = DEFAULT_EENHEDEN.map((naam, i) => ({ id: uuid(), naam, volgorde: i + 1 }));
 
 let demoTags = [
-  { id: uuid(), naam: 'Grote groepen' },
-  { id: uuid(), naam: 'Snel klaar' }
+  { id: uuid(), naam: 'Grote groepen', volgorde: 1 },
+  { id: uuid(), naam: 'Snel klaar', volgorde: 2 }
 ];
 let demoRecipeTagIds = {}; // { [recipeId]: [tagId, ...] }
 let demoNotities = {}; // { [recipeId]: [{id, tekst, datum, aangemaakt}, ...] }
@@ -235,7 +268,8 @@ async function resolveIngredientId(naam) {
   const { data: aliasRows, error: aErr } = await supabase.from('ingredient_aliassen').select('ingredient_id').ilike('alias', clean).limit(1);
   check(aErr);
   if (aliasRows && aliasRows.length) return aliasRows[0].ingredient_id;
-  const { data: created, error: cErr } = await supabase.from('ingredients').insert({ naam: clean }).select().single();
+  const volgorde = await nextVolgorde('ingredients');
+  const { data: created, error: cErr } = await supabase.from('ingredients').insert({ naam: clean, volgorde }).select().single();
   check(cErr);
   return created.id;
 }
@@ -384,7 +418,7 @@ export async function updateInstellingen(patch) {
 // ─────────────────────────────── Kenmerk-opties (basis / proteine / keuken)
 export async function fetchKenmerkOpties() {
   if (DEMO_MODE) {
-    return demoKenmerkOpties.slice().sort((a, b) => a.volgorde - b.volgorde || a.naam.localeCompare(b.naam));
+    return demoKenmerkOpties.slice().sort(byVolgorde);
   }
   const { data, error } = await supabase.from('kenmerk_opties').select('*').order('categorie').order('volgorde').order('naam');
   check(error);
@@ -393,12 +427,13 @@ export async function fetchKenmerkOpties() {
 
 export async function addKenmerkOptie(categorie, naam) {
   if (DEMO_MODE) {
-    const volgorde = demoKenmerkOpties.filter((k) => k.categorie === categorie).length + 1;
+    const volgorde = maxVolgorde(demoKenmerkOpties.filter((k) => k.categorie === categorie)) + 1;
     const row = { id: uuid(), categorie, naam, volgorde };
     demoKenmerkOpties.push(row);
     return row;
   }
-  const { data, error } = await supabase.from('kenmerk_opties').insert({ categorie, naam }).select().single();
+  const volgorde = await nextVolgorde('kenmerk_opties', { kolom: 'categorie', waarde: categorie });
+  const { data, error } = await supabase.from('kenmerk_opties').insert({ categorie, naam, volgorde }).select().single();
   check(error);
   return data;
 }
@@ -435,7 +470,7 @@ export async function deleteKenmerkOptie(id, categorie, naam) {
 
 // ─────────────────────────────── Eenheden (keuzelijst voor het formulier)
 export async function fetchEenheden() {
-  if (DEMO_MODE) return demoEenheden.slice().sort((a, b) => a.volgorde - b.volgorde || a.naam.localeCompare(b.naam));
+  if (DEMO_MODE) return demoEenheden.slice().sort(byVolgorde);
   const { data, error } = await supabase.from('eenheden').select('*').order('volgorde').order('naam');
   check(error);
   return data;
@@ -443,11 +478,12 @@ export async function fetchEenheden() {
 
 export async function addEenheid(naam) {
   if (DEMO_MODE) {
-    const row = { id: uuid(), naam: naam.trim(), volgorde: demoEenheden.length + 1 };
+    const row = { id: uuid(), naam: naam.trim(), volgorde: maxVolgorde(demoEenheden) + 1 };
     demoEenheden.push(row);
     return row;
   }
-  const { data, error } = await supabase.from('eenheden').insert({ naam: naam.trim() }).select().single();
+  const volgorde = await nextVolgorde('eenheden');
+  const { data, error } = await supabase.from('eenheden').insert({ naam: naam.trim(), volgorde }).select().single();
   check(error);
   return data;
 }
@@ -488,19 +524,20 @@ export async function deleteEenheid(id, naam) {
 
 // ─────────────────────────────── Tags
 export async function fetchTags() {
-  if (DEMO_MODE) return demoTags.slice().sort((a, b) => a.naam.localeCompare(b.naam));
-  const { data, error } = await supabase.from('tags').select('*').order('naam');
+  if (DEMO_MODE) return demoTags.slice().sort(byVolgorde);
+  const { data, error } = await supabase.from('tags').select('*').order('volgorde').order('naam');
   check(error);
   return data;
 }
 
 export async function addTag(naam) {
   if (DEMO_MODE) {
-    const row = { id: uuid(), naam };
+    const row = { id: uuid(), naam, volgorde: maxVolgorde(demoTags) + 1 };
     demoTags.push(row);
     return row;
   }
-  const { data, error } = await supabase.from('tags').insert({ naam }).select().single();
+  const volgorde = await nextVolgorde('tags');
+  const { data, error } = await supabase.from('tags').insert({ naam, volgorde }).select().single();
   check(error);
   return data;
 }
@@ -535,8 +572,8 @@ export async function setRecipeTags(recipeId, tagIds) {
 
 // ─────────────────────────────── Ingrediënten (canoniek) beheren
 export async function fetchIngredients() {
-  if (DEMO_MODE) return demoIngredients.slice().sort((a, b) => a.naam.localeCompare(b.naam));
-  const { data, error } = await supabase.from('ingredients').select('*').order('naam');
+  if (DEMO_MODE) return demoIngredients.slice().sort(byVolgorde);
+  const { data, error } = await supabase.from('ingredients').select('*').order('volgorde').order('naam');
   check(error);
   return data;
 }
@@ -544,11 +581,12 @@ export async function fetchIngredients() {
 export async function addIngredient(naam) {
   const clean = naam.trim();
   if (DEMO_MODE) {
-    const row = { id: uuid(), naam: clean, standaard_eenheid: null };
+    const row = { id: uuid(), naam: clean, standaard_eenheid: null, volgorde: maxVolgorde(demoIngredients) + 1 };
     demoIngredients.push(row);
     return row;
   }
-  const { data, error } = await supabase.from('ingredients').insert({ naam: clean }).select().single();
+  const volgorde = await nextVolgorde('ingredients');
+  const { data, error } = await supabase.from('ingredients').insert({ naam: clean, volgorde }).select().single();
   check(error);
   return data;
 }

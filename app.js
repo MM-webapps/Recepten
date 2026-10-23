@@ -143,6 +143,7 @@ function renderModalRoot() {
     else if (state.modal.type === 'edit') html += renderEditModal(getRecipe(state.modal.id));
     else if (state.modal.type === 'pick') html += renderPickModal(state.modal.day);
     else if (state.modal.type === 'manage') html += renderManageModal();
+    else if (state.modal.type === 'shop-item') html += renderShopItemModal(state.modal.key);
   }
   if (state.confirm) html += renderConfirmDialog(state.confirm.message);
   return html;
@@ -437,10 +438,35 @@ function renderShopSection(title, items, checked, muted) {
       ${[...items.filter((i) => !checked[i.key]), ...items.filter((i) => checked[i.key])].map((item) => `
         <div class="shop-item ${checked[item.key] ? 'checked' : ''}">
           <input type="checkbox" data-action="toggle-checked" data-key="${item.key}" ${checked[item.key] ? 'checked' : ''}>
-          <span class="naam">${escapeHtml(item.naam)}</span>
+          <span class="naam" data-action="open-shop-item" data-key="${escapeHtml(item.key)}" style="cursor:pointer" title="Toon in welke recepten">${escapeHtml(item.naam)}</span>
           <span class="mono hoeveelheid">${item.hoeveelheid != null ? item.hoeveelheid : ''} ${escapeHtml(item.eenheid)}</span>
         </div>
       `).join('')}
+    </div>
+  `;
+}
+
+function renderShopItemModal(key) {
+  const fridgeNames = state.fridge.map((f) => f.naam);
+  const item = buildShoppingList(state.weekmenu, state.recipes, fridgeNames).find((i) => i.key === key);
+  if (!item) return '';
+  const fmt = (b) => (b.hoeveelheid != null ? `${b.hoeveelheid} ${escapeHtml(item.eenheid)}`.trim() : '<span class="text-soft">naar smaak</span>');
+  return `
+    <div class="modal-backdrop">
+      <div class="modal-card narrow">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="display" style="font-size:18px;margin:0">${escapeHtml(item.naam)}</h2>
+          <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
+        </div>
+        <p class="text-sm text-soft mb-3">Totaal: <span class="mono">${item.hoeveelheid != null ? item.hoeveelheid : ''} ${escapeHtml(item.eenheid)}</span></p>
+        ${item.bronnen.map((b) => `
+          <div class="flex items-center gap-2 mb-2" style="justify-content:space-between">
+            <button class="btn btn-outline btn-sm" style="text-align:left;flex:1" data-action="open-view" data-id="${b.recipeId}">
+              <span class="mono text-soft" style="font-size:11px">${DAG_NAMEN[b.dag]}</span> ${escapeHtml(b.titel)}
+            </button>
+            <span class="mono text-sm">${fmt(b)}</span>
+          </div>`).join('')}
+      </div>
     </div>
   `;
 }
@@ -852,12 +878,12 @@ function renderManageModal() {
           <h2 class="display" style="font-size:20px;margin:0">Beheren</h2>
           <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
         </div>
-        <p class="text-sm text-soft mb-3">Wijzigingen gelden voor alle recepten. Hernoemen werkt overal door; verwijderen kan alleen als niets deze waarde meer gebruikt. Bij ingrediënten kun je twee dubbele varianten ook samenvoegen (bv. "rode ui" → "ui"), zodat de boodschappenlijst ze als één ding optelt.</p>
+        <p class="text-sm text-soft mb-3">Wijzigingen gelden voor alle recepten. Hernoemen werkt overal door; verwijderen kan alleen als niets deze waarde meer gebruikt. Bij ingrediënten kun je twee dubbele varianten ook samenvoegen (bv. "rode ui" → "ui"), zodat de boodschappenlijst ze als één ding optelt. Sleep aan het handvat links om de volgorde te wijzigen; die volgorde zie je ook in de keuzelijsten.</p>
         <div class="flex gap-2 mb-4 flex-wrap" style="border-bottom:1px solid var(--line);padding-bottom:12px">
           ${tabs.map((t) => `<button class="btn ${m.categorie === t.key ? 'btn-primary' : 'btn-outline'} btn-sm" data-action="manage-tab" data-categorie="${t.key}">${escapeHtml(t.label)}</button>`).join('')}
         </div>
         ${m.error ? bannerError(m.error) : ''}
-        <div class="mb-3" style="max-height:340px;overflow-y:auto">
+        <div id="manage-list" class="mb-3" style="max-height:340px;overflow-y:auto">
           ${items.length === 0 ? `<p class="text-sm text-soft">Nog niets toegevoegd.</p>` : items.map((it) => (m.categorie === 'ingredienten' ? renderIngredientRow(it, m) : renderManageRow(it, m))).join('')}
         </div>
         <div class="flex gap-2">
@@ -881,7 +907,8 @@ function renderManageRow(item, m) {
     `;
   }
   return `
-    <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+    <div class="flex items-center gap-2 manage-row" data-id="${item.id}" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <span class="drag-handle" data-drag-handle title="Sleep om de volgorde te wijzigen">${icon('grip-vertical')}</span>
       <span class="text-sm" style="flex:1">${escapeHtml(item.naam)}</span>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-start" data-id="${item.id}">${icon('pencil')}</button>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-delete" data-id="${item.id}" data-naam="${escapeHtml(item.naam)}">${icon('trash-2')}</button>
@@ -915,7 +942,8 @@ function renderIngredientRow(item, m) {
     `;
   }
   return `
-    <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+    <div class="flex items-center gap-2 manage-row" data-id="${item.id}" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <span class="drag-handle" data-drag-handle title="Sleep om de volgorde te wijzigen">${icon('grip-vertical')}</span>
       <span class="text-sm" style="flex:1">${escapeHtml(item.naam)}</span>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-merge-start" data-id="${item.id}" title="Samenvoegen met ander ingrediënt">${icon('git-merge')}</button>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-start" data-id="${item.id}">${icon('pencil')}</button>
@@ -1088,6 +1116,11 @@ async function handleAction(action, el) {
       rerender();
       break;
 
+    case 'open-shop-item':
+      state.modal = { type: 'shop-item', key: el.dataset.key };
+      rerender();
+      break;
+
     case 'plan-from-detail': {
       const day = document.getElementById('plan-day-select').value;
       const recipeId = el.dataset.id;
@@ -1221,7 +1254,7 @@ async function handleAction(action, el) {
         ? Array.from(tagsContainer.querySelectorAll('[name="tagIds"]:checked')).map((cb) => cb.value)
         : [];
       const newTag = await db.addTag(naam);
-      state.tags = [...state.tags, newTag].sort((a, b) => a.naam.localeCompare(b.naam));
+      state.tags = [...state.tags, newTag];
       if (tagsContainer) { tagsContainer.innerHTML = tagCheckboxesHtml([...checkedIds, newTag.id]); hydrateIcons(); }
       input.value = '';
       break;
@@ -1243,10 +1276,10 @@ async function handleAction(action, el) {
       try {
         if (categorie === 'tags') {
           const row = await db.addTag(naam);
-          state.tags = [...state.tags, row].sort((a, b) => a.naam.localeCompare(b.naam));
+          state.tags = [...state.tags, row];
         } else if (categorie === 'ingredienten') {
           const row = await db.addIngredient(naam);
-          state.ingredients = [...state.ingredients, row].sort((a, b) => a.naam.localeCompare(b.naam));
+          state.ingredients = [...state.ingredients, row];
         } else if (categorie === 'eenheden') {
           const row = await db.addEenheid(naam);
           state.eenheden = [...state.eenheden, row];
@@ -1282,11 +1315,11 @@ async function handleAction(action, el) {
       try {
         if (categorie === 'tags') {
           await db.renameTag(id, nieuweNaam);
-          state.tags = state.tags.map((t) => (t.id === id ? { ...t, naam: nieuweNaam } : t)).sort((a, b) => a.naam.localeCompare(b.naam));
+          state.tags = state.tags.map((t) => (t.id === id ? { ...t, naam: nieuweNaam } : t));
           state.recipes = state.recipes.map((r) => ({ ...r, tags: (r.tags || []).map((t) => (t.id === id ? { ...t, naam: nieuweNaam } : t)) }));
         } else if (categorie === 'ingredienten') {
           await db.renameIngredient(id, nieuweNaam);
-          state.ingredients = state.ingredients.map((i) => (i.id === id ? { ...i, naam: nieuweNaam } : i)).sort((a, b) => a.naam.localeCompare(b.naam));
+          state.ingredients = state.ingredients.map((i) => (i.id === id ? { ...i, naam: nieuweNaam } : i));
           state.recipes = state.recipes.map((r) => ({
             ...r,
             onderdelen: (r.onderdelen || []).map((o) => ({
@@ -1398,6 +1431,89 @@ async function handleAction(action, el) {
   }
 }
 
+// ─────────────────────────────────────────── Slepen in Beheren (pointer events: werkt met muis en touch)
+const MANAGE_TABELLEN = { tags: 'tags', ingredienten: 'ingredients', eenheden: 'eenheden' };
+
+function manageItems(categorie) {
+  return categorie === 'tags' ? state.tags
+    : categorie === 'ingredienten' ? state.ingredients
+    : categorie === 'eenheden' ? state.eenheden
+    : state.kenmerkOpties[categorie];
+}
+
+function setManageItems(categorie, lijst) {
+  if (categorie === 'tags') state.tags = lijst;
+  else if (categorie === 'ingredienten') state.ingredients = lijst;
+  else if (categorie === 'eenheden') state.eenheden = lijst;
+  else state.kenmerkOpties[categorie] = lijst;
+}
+
+function wireManageDrag() {
+  const list = document.getElementById('manage-list');
+  if (!list) return;
+  list.querySelectorAll('[data-drag-handle]').forEach((handle) => {
+    handle.addEventListener('pointerdown', (e) => startManageDrag(e, list, handle));
+  });
+}
+
+function startManageDrag(e, list, handle) {
+  const row = handle.closest('.manage-row');
+  if (!row) return;
+  e.preventDefault();
+  try { handle.setPointerCapture(e.pointerId); } catch (_) { /* niet kritiek */ }
+  row.classList.add('dragging');
+  let lastY = e.clientY;
+
+  const place = () => {
+    const rows = Array.from(list.querySelectorAll('.manage-row')).filter((r) => r !== row);
+    const next = rows.find((r) => {
+      const b = r.getBoundingClientRect();
+      return lastY < b.top + b.height / 2;
+    });
+    if (next) { if (row.nextElementSibling !== next) list.insertBefore(row, next); }
+    else if (list.lastElementChild !== row) list.appendChild(row);
+  };
+  const onMove = (ev) => { lastY = ev.clientY; place(); };
+  // Automatisch scrollen als je dicht bij de rand van de lijst sleept.
+  const scrollTimer = setInterval(() => {
+    const b = list.getBoundingClientRect();
+    if (lastY < b.top + 28) { list.scrollTop -= 10; place(); }
+    else if (lastY > b.bottom - 28) { list.scrollTop += 10; place(); }
+  }, 16);
+  const onEnd = () => {
+    clearInterval(scrollTimer);
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onEnd);
+    window.removeEventListener('pointercancel', onEnd);
+    row.classList.remove('dragging');
+    const ids = Array.from(list.querySelectorAll('.manage-row')).map((r) => r.dataset.id);
+    commitManageOrder(ids).catch((err) => console.error(err));
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onEnd);
+  window.addEventListener('pointercancel', onEnd);
+}
+
+async function commitManageOrder(ids) {
+  const categorie = state.modal && state.modal.categorie;
+  if (!categorie) return;
+  const huidig = manageItems(categorie);
+  const byId = Object.fromEntries(huidig.map((i) => [i.id, i]));
+  const nieuw = ids.filter((id) => byId[id]).map((id, idx) => ({ ...byId[id], volgorde: idx + 1 }));
+  if (nieuw.length !== huidig.length) return;
+  const gewijzigd = nieuw.filter((i) => (byId[i.id].volgorde || 0) !== i.volgorde).map((i) => ({ id: i.id, volgorde: i.volgorde }));
+  if (gewijzigd.length === 0) return;
+  setManageItems(categorie, nieuw);
+  try {
+    await db.reorderItems(MANAGE_TABELLEN[categorie] || 'kenmerk_opties', gewijzigd);
+    state.modal.error = '';
+  } catch (err) {
+    setManageItems(categorie, huidig);
+    state.modal.error = (err && err.message) || 'Volgorde opslaan mislukt.';
+    rerender();
+  }
+}
+
 // ─────────────────────────────────────────── Dynamische listeners (na elke render opnieuw aangekoppeld)
 function wireDynamicListeners() {
   const fridgeInput = document.getElementById('fridge-input');
@@ -1409,6 +1525,8 @@ function wireDynamicListeners() {
     if (!file) return;
     handleJsonFile(file);
   });
+
+  wireManageDrag();
 
   const form = document.getElementById('recipe-form');
   if (form) form.addEventListener('submit', handleRecipeFormSubmit);
