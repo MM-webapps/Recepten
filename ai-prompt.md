@@ -1,4 +1,4 @@
-# Prompt: recept omzetten naar JSON voor Receptenkist
+# Prompt: recept omzetten naar JSON voor MMenu-Planner
 
 Plak onderstaande prompt in een AI-tool (Claude, ChatGPT, etc.), samen met
 het recept (tekst, een link, of een beschrijving van een foto). Sla het
@@ -55,7 +55,7 @@ Regels:
 - Schat "personen" en "bereidingstijd" in minuten als deze niet expliciet
   in het recept staan.
 - Gebruik voor "eenheid" bij voorkeur: g, kg, ml, l, el, tl, stuks,
-  tenen, snufje of blikje (of laat leeg). Schrijf dus "g" in plaats van
+  teentje, snufje of blikje (of laat leeg). Schrijf dus "g" in plaats van
   "gram", en "tl" in plaats van "theelepel" — zo telt de boodschappenlijst
   dezelfde ingrediënten van verschillende recepten goed bij elkaar op.
 - "hoeveelheid" is een getal (gebruik een punt voor decimalen, bv. 0.5),

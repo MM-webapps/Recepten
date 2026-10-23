@@ -1,4 +1,4 @@
--- Receptenkist — Supabase schema
+-- MMenu-Planner — Supabase schema
 -- Plak dit hele bestand in Supabase → SQL Editor → New query → Run.
 -- Geen login: alle tabellen zijn leesbaar/schrijfbaar met de "anon" sleutel.
 -- Zie README.md voor de afweging die daarbij hoort.

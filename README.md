@@ -1,4 +1,4 @@
-# Receptenkist
+# MMenu-Planner
 
 Een persoonlijke receptenapp: recepten met kenmerken (basis, proteïne, keuken,
 personen), een weekmenu, een koelkast-check en een boodschappenlijst.

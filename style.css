@@ -299,3 +299,4 @@ textarea.input { resize: vertical; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+.week-titel:hover { text-decoration: underline; }

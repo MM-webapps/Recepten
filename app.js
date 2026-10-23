@@ -88,7 +88,7 @@ function renderLoading() {
   return `<div style="min-height:60vh;display:flex;align-items:center;justify-content:center">
     <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
       ${icon('loader-2', 'spin')}
-      <span class="text-sm text-soft">Receptenkist wordt geladen...</span>
+      <span class="text-sm text-soft">MMenu-Planner wordt geladen...</span>
     </div>
   </div>`;
 }
@@ -163,7 +163,7 @@ function renderHeaderNav() {
   return `
     <div class="header">
       <div class="wrap header-top">
-        <div class="brand">${icon('chef-hat')}<span class="display">Receptenkist</span></div>
+        <div class="brand">${icon('chef-hat')}<span class="display">MMenu-Planner</span></div>
         <div class="flex gap-2">
           <button class="btn btn-outline btn-sm" data-action="open-manage">${icon('settings')} Beheren</button>
           <button class="btn btn-primary btn-sm" data-action="open-add">${icon('plus')} Nieuw recept</button>
@@ -330,6 +330,7 @@ function renderWeekmenu() {
               <button data-action="huishoud-plus">${icon('plus')}</button>
             </div>
           </div>
+          ${filled > 0 ? `<button class="btn btn-outline" data-action="ask-clear-week">${icon('trash-2')} Weekmenu leegmaken</button>` : ''}
           <button class="btn btn-primary" data-action="go-shopping">${icon('shopping-cart')} Boodschappenlijst</button>
         </div>
       </div>
@@ -348,7 +349,7 @@ function renderWeekDay(dag) {
       <div class="mono text-soft" style="font-size:11px;font-weight:600;margin-bottom:8px">${DAG_NAMEN[dag]}</div>
       ${recipe ? `
         <div style="flex:1;display:flex;flex-direction:column">
-          <div style="font-weight:600;font-size:13.5px;margin-bottom:8px;flex:1">${escapeHtml(recipe.titel)}</div>
+          <div class="week-titel" style="font-weight:600;font-size:13.5px;margin-bottom:8px;flex:1;cursor:pointer" data-action="open-view" data-id="${recipe.id}" title="Open recept">${escapeHtml(recipe.titel)}</div>
           <div class="pills mb-2">${renderPill('basis', recipe.basis)}${renderPill('proteine', recipe.proteine)}</div>
           <div class="flex items-center gap-2 mb-2">
             <span class="text-sm text-soft">${icon('users')}</span>
@@ -433,7 +434,7 @@ function renderShopSection(title, items, checked, muted) {
   return `
     <div class="card mb-4" style="padding:16px;${muted ? 'opacity:.75' : ''}">
       <h3 class="display" style="font-size:15px;margin:0 0 10px">${escapeHtml(title)} <span class="mono text-soft" style="font-size:12px;font-weight:400">(${items.length})</span></h3>
-      ${items.map((item) => `
+      ${[...items.filter((i) => !checked[i.key]), ...items.filter((i) => checked[i.key])].map((item) => `
         <div class="shop-item ${checked[item.key] ? 'checked' : ''}">
           <input type="checkbox" data-action="toggle-checked" data-key="${item.key}" ${checked[item.key] ? 'checked' : ''}>
           <span class="naam">${escapeHtml(item.naam)}</span>
@@ -1067,6 +1068,23 @@ async function handleAction(action, el) {
     case 'remove-day':
       await db.setWeekmenuDag(el.dataset.day, null);
       state.weekmenu[el.dataset.day] = null;
+      rerender();
+      break;
+
+    case 'ask-clear-week':
+      state.confirm = {
+        message: 'Weet je zeker dat je het hele weekmenu wilt leegmaken?',
+        onConfirm: async () => {
+          for (const d of DAGEN) {
+            if (state.weekmenu[d]) {
+              await db.setWeekmenuDag(d, null);
+              state.weekmenu[d] = null;
+            }
+          }
+          state.confirm = null;
+          rerender();
+        }
+      };
       rerender();
       break;
 
