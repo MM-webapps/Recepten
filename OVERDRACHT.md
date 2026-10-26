@@ -1,6 +1,6 @@
 # MMenu-Planner — overdrachtsdocument
 
-Laatst bijgewerkt: 22 okt 2026 (release 3 afgerond, backlog leeg).
+Laatst bijgewerkt: 22 okt 2026 (release 4 afgerond).
 
 ## 1. Wat doet de app
 Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
@@ -49,7 +49,8 @@ Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
 - **notities**: recipe_id, tekst, datum, aangemaakt
 - **weekmenu**: dag (PK), recipe_id, personen
 - **koelkast**: id, naam, aangemaakt
-- **instellingen**: één rij (id=1): huishoud_personen, boodschappen_vinkjes (jsonb, key = item.key)
+- **instellingen**: één rij (id=1): huishoud_personen, boodschappen_vinkjes (jsonb, key = item.key), boodschappen_thuis (bool: Thuis = basisvoorraad verborgen, Alles = alles tonen)
+- **afdelingen**: id, naam (uniek), volgorde — supermarktafdelingen, beheerbaar/sleepbaar; ingredients.afdeling_id (on delete set null) en ingredients.altijd_in_huis (bool, basisvoorraad)
 
 ## 5. Code-architectuur in het kort
 - Eén `state`-object in app.js; `rerender()` tekent alles opnieuw. Events via `data-action` + `handleAction` (switch). Modals: `state.modal = {type: add|view|edit|pick|manage}`.
@@ -86,6 +87,13 @@ Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
 
 **Release 3 — slepen in Beheren ✅ KLAAR (23 okt 2026)**
 - (d) Drag-and-drop volgorde voor opties/eenheden/tags/ingrediënten: `volgorde` zetten bij insert (kenmerk_opties, eenheden), `volgorde`-kolom toevoegen waar nodig (tags, evt. ingredients) via idempotente migratie in schema.sql, db.js-functies voor herordenen, drag-handlers in de Beheren-UI. Bestaande rijen met volgorde 0 hernummeren.
+
+**Release 4 — afdelingen, basisvoorraad, delen ✅ KLAAR (26 okt 2026)**
+- Tabel `afdelingen` + `ingredients.afdeling_id`/`altijd_in_huis` + `instellingen.boodschappen_thuis`; Beheren-tabs Afdelingen en Basisvoorraad; afdeling-keuzelijst per ingrediënt, filter "Zonder afdeling", "Automatisch indelen" (trefwoordenregels `suggestAfdeling` in utils.js) en "Kopieer namen".
+- Boodschappenlijst gegroepeerd per afdeling (volgorde = afdelingenvolgorde, daarna "Nog niet ingedeeld"), Thuis/Alles-schakelaar, "Deel lijst" (`shoppingListToText`, Web Share API met kopieer-fallback).
+- Afdeling-consistentie: bestaand ingrediënt houdt zijn afdeling; alleen NIEUWE ingrediënten (of ingrediënten zonder afdeling) krijgen er een: eerst `afdeling` uit de import-JSON (alleen bij exacte naam en niet "Overig"), anders trefwoordenregels, anders niets (`kiesAfdelingId` in db.js).
+
+**Release 5 — offline (gepland)**: service worker (app-bestanden cachen, versienummer), supabase-js en lucide in de repo zetten i.p.v. CDN, laatste data + vinkjes lokaal bewaren en synchroniseren, "Offline"-melding; alleen boodschappenlijst bruikbaar offline.
 
 ## 9. Doorgaan in een nieuwe chat / Project
 Plak dit document + upload de bestanden (of plak alleen de bestanden die de release raakt: release 1 = index.html, app.js, README.md, ai-prompt.md; release 2 = utils.js, app.js; release 3 = db.js, schema.sql, app.js, style.css). Vraag per release: "Voer release N uit". Vergeet niet `config.js` op GitHub te laten staan.

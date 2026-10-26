@@ -141,9 +141,20 @@ create table if not exists eenheden (
   volgorde  integer not null default 0
 );
 
+-- Standaardeenheden zijn "gr" (gram), "st" (stuks) en "tenen" (knoflook). Bestaande "g" en
+-- "stuks" worden hernoemd (op hun plek in de lijst) en doorgevoerd in alle
+-- receptregels. Veilig om opnieuw te draaien.
+update eenheden set naam = 'gr' where naam = 'g'     and not exists (select 1 from eenheden where naam = 'gr');
+update eenheden set naam = 'st' where naam = 'stuks' and not exists (select 1 from eenheden where naam = 'st');
+update eenheden set naam = 'tenen' where naam = 'teentje' and not exists (select 1 from eenheden where naam = 'tenen');
+delete from eenheden where naam in ('g', 'stuks', 'teentje');
+update recipe_ingredienten set eenheid = 'gr' where lower(trim(eenheid)) in ('g', 'gram', 'grammen');
+update recipe_ingredienten set eenheid = 'st' where lower(trim(eenheid)) in ('stuk', 'stuks', 'stk');
+update recipe_ingredienten set eenheid = 'tenen' where lower(trim(eenheid)) in ('teen', 'teentje', 'teentjes');
+
 insert into eenheden (naam, volgorde) values
-  ('g', 1), ('kg', 2), ('ml', 3), ('l', 4), ('el', 5), ('tl', 6),
-  ('stuks', 7), ('teentje', 8), ('snufje', 9), ('blikje', 10)
+  ('gr', 1), ('kg', 2), ('ml', 3), ('l', 4), ('el', 5), ('tl', 6),
+  ('st', 7), ('tenen', 8), ('snufje', 9), ('blikje', 10)
 on conflict (naam) do nothing;
 
 -- ───────────────────────────────────────────── Volgorde (slepen in Beheren)
@@ -183,6 +194,28 @@ from (
   from kenmerk_opties k0 where k0.volgorde = 0
 ) s
 where k.id = s.id;
+
+-- ───────────────────────────────────────────── Afdelingen (supermarkt) en basisvoorraad
+-- Afdelingen: beheerbaar en sleepbaar in Beheren → Afdelingen. Elk
+-- ingredient hoort bij hooguit één afdeling. Wordt een afdeling verwijderd,
+-- dan worden de ingrediënten gewoon "niet ingedeeld" (niets gaat verloren).
+create table if not exists afdelingen (
+  id        uuid primary key default gen_random_uuid(),
+  naam      text not null unique,
+  volgorde  integer not null default 0
+);
+
+insert into afdelingen (naam, volgorde) values
+  ('Groente & fruit', 1), ('Brood & bakkerij', 2), ('Vlees & vis', 3), ('Zuivel & eieren', 4),
+  ('Pasta, rijst & granen', 5), ('Wereldkeuken & sauzen', 6), ('Conserven & houdbaar', 7),
+  ('Kruiden & olie', 8), ('Diepvries', 9), ('Dranken', 10), ('Overig', 11)
+on conflict (naam) do nothing;
+
+alter table ingredients add column if not exists afdeling_id uuid references afdelingen(id) on delete set null;
+-- "Altijd in huis": basisvoorraad (zout, olie...) die in Thuis-modus niet op de boodschappenlijst komt.
+alter table ingredients add column if not exists altijd_in_huis boolean not null default false;
+-- Thuis (true) of Alles (false) op de boodschappenlijst.
+alter table instellingen add column if not exists boodschappen_thuis boolean not null default true;
 
 -- ───────────────────────────────────────────── Eenmalige migratie
 -- Zet bestaande recepten (met de oude platte kolommen recipes.ingredienten
@@ -230,8 +263,8 @@ begin
         when 'theelepel'  then 'tl'
         when 'theelepels' then 'tl'
         when 'stuk'       then 'stuks'
-        when 'teen'       then 'teentje'
-        when 'teentjes'   then 'teentje'
+        when 'teen'       then 'tenen'
+        when 'teentjes'   then 'tenen'
         when 'snuf'       then 'snufje'
         when 'snufjes'    then 'snufje'
         when 'blik'       then 'blikje'
@@ -270,6 +303,7 @@ alter table ingredient_aliassen enable row level security;
 alter table recipe_onderdelen enable row level security;
 alter table recipe_ingredienten enable row level security;
 alter table eenheden enable row level security;
+alter table afdelingen enable row level security;
 
 drop policy if exists "recipes_open" on recipes;
 create policy "recipes_open" on recipes for all using (true) with check (true);
@@ -309,3 +343,6 @@ create policy "recipe_ingredienten_open" on recipe_ingredienten for all using (t
 
 drop policy if exists "eenheden_open" on eenheden;
 create policy "eenheden_open" on eenheden for all using (true) with check (true);
+
+drop policy if exists "afdelingen_open" on afdelingen;
+create policy "afdelingen_open" on afdelingen for all using (true) with check (true);

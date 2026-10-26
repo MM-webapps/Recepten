@@ -7,8 +7,8 @@
 // bij een herlaad van de pagina).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
-import { DEFAULT_BASIS_OPTIONS, DEFAULT_PROTEINE_OPTIONS, DEFAULT_KEUKEN_OPTIONS, DEFAULT_EENHEDEN } from './constants.js';
-import { normalizeEenheid } from './utils.js';
+import { DEFAULT_BASIS_OPTIONS, DEFAULT_PROTEINE_OPTIONS, DEFAULT_KEUKEN_OPTIONS, DEFAULT_EENHEDEN, DEFAULT_AFDELINGEN } from './constants.js';
+import { normalizeEenheid, normName, suggestAfdeling } from './utils.js';
 
 export const DEMO_MODE =
   !SUPABASE_URL || SUPABASE_URL.includes('JOUW-PROJECT') ||
@@ -42,11 +42,20 @@ function maxVolgorde(lijst) {
   return lijst.reduce((m, x) => Math.max(m, x.volgorde || 0), 0);
 }
 
+// Kiest de afdeling voor een NIEUW ingrediënt: eerst de afdeling die de import
+// meegaf (alleen als die exact bij een bestaande afdeling hoort en niet
+// "Overig" is), anders de trefwoordenregels, anders geen afdeling.
+function kiesAfdelingId(naam, voorstel, afdelingen) {
+  const vind = (n) => (n && normName(n) !== 'overig' ? afdelingen.find((a) => normName(a.naam) === normName(n)) : null);
+  const hit = vind(voorstel) || vind(suggestAfdeling(naam));
+  return hit ? hit.id : null;
+}
+
 const byVolgorde = (a, b) => (a.volgorde || 0) - (b.volgorde || 0) || a.naam.localeCompare(b.naam);
 
 // Slaat een nieuwe volgorde op. "rows" bevat alleen de gewijzigde items:
 // [{ id, volgorde }, ...]. Tabelnaam komt uit een vaste lijst.
-const ORDERABLE = ['tags', 'ingredients', 'eenheden', 'kenmerk_opties'];
+const ORDERABLE = ['tags', 'ingredients', 'eenheden', 'kenmerk_opties', 'afdelingen'];
 export async function reorderItems(table, rows) {
   if (!ORDERABLE.includes(table)) throw new Error('Onbekende tabel.');
   if (DEMO_MODE) {
@@ -54,6 +63,7 @@ export async function reorderItems(table, rows) {
     if (table === 'tags') demoTags = patch(demoTags);
     else if (table === 'ingredients') demoIngredients = patch(demoIngredients);
     else if (table === 'eenheden') demoEenheden = patch(demoEenheden);
+    else if (table === 'afdelingen') demoAfdelingen = patch(demoAfdelingen);
     else demoKenmerkOpties = patch(demoKenmerkOpties);
     return;
   }
@@ -63,9 +73,10 @@ export async function reorderItems(table, rows) {
 
 // ─────────────────────────────── Demo-data (alleen gebruikt in demo-modus)
 let demoIngredients = [];
+let demoAfdelingen = DEFAULT_AFDELINGEN.map((naam, i) => ({ id: uuid(), naam, volgorde: i + 1 }));
 let demoIngredientAliassen = [];
 
-function demoResolveIngredient(naam) {
+function demoResolveIngredient(naam, voorstel) {
   const clean = (naam || '').trim();
   const lower = clean.toLowerCase();
   let found = demoIngredients.find((i) => i.naam.toLowerCase() === lower);
@@ -74,7 +85,7 @@ function demoResolveIngredient(naam) {
     if (alias) found = demoIngredients.find((i) => i.id === alias.ingredient_id);
   }
   if (!found) {
-    found = { id: uuid(), naam: clean, standaard_eenheid: null, volgorde: maxVolgorde(demoIngredients) + 1 };
+    found = { id: uuid(), naam: clean, standaard_eenheid: null, volgorde: maxVolgorde(demoIngredients) + 1, afdeling_id: kiesAfdelingId(clean, voorstel, demoAfdelingen), altijd_in_huis: false };
     demoIngredients.push(found);
   }
   return found;
@@ -87,7 +98,7 @@ function buildDemoOnderdelen(onderdelen) {
     volgorde: oi + 1,
     instructies: o.instructies || [],
     ingredienten: (o.ingredienten || []).filter((i) => i.naam).map((ing, ii) => {
-      const canon = demoResolveIngredient(ing.naam);
+      const canon = demoResolveIngredient(ing.naam, ing.afdeling);
       return {
         id: uuid(),
         ingredientId: canon.id,
@@ -112,8 +123,8 @@ const demoSeedRecipes = [
     onderdelen: [{
       naam: '',
       ingredienten: [
-        { naam: 'Kipfilet', hoeveelheid: 500, eenheid: 'g' },
-        { naam: 'Rijst', hoeveelheid: 300, eenheid: 'g' },
+        { naam: 'Kipfilet', hoeveelheid: 500, eenheid: 'gr' },
+        { naam: 'Rijst', hoeveelheid: 300, eenheid: 'gr' },
         { naam: 'Ui', hoeveelheid: 1, eenheid: '' },
         { naam: 'Kerriepoeder', hoeveelheid: 2, eenheid: 'el' },
         { naam: 'Kokosmelk', hoeveelheid: 400, eenheid: 'ml' }
@@ -132,11 +143,11 @@ const demoSeedRecipes = [
     onderdelen: [{
       naam: '',
       ingredienten: [
-        { naam: 'Pasta', hoeveelheid: 350, eenheid: 'g' },
-        { naam: 'Gehakt', hoeveelheid: 400, eenheid: 'g' },
+        { naam: 'Pasta', hoeveelheid: 350, eenheid: 'gr' },
+        { naam: 'Gehakt', hoeveelheid: 400, eenheid: 'gr' },
         { naam: 'Gezeefde tomaten', hoeveelheid: 700, eenheid: 'ml' },
         { naam: 'Ui', hoeveelheid: 1, eenheid: '' },
-        { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'teentje' }
+        { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'tenen' }
       ],
       instructies: [
         'Fruit ui en knoflook aan.',
@@ -153,10 +164,10 @@ const demoSeedRecipes = [
       {
         naam: 'Marinade',
         ingredienten: [
-          { naam: 'Kipfilet', hoeveelheid: 500, eenheid: 'g' },
-          { naam: 'Yoghurt', hoeveelheid: 150, eenheid: 'g' },
+          { naam: 'Kipfilet', hoeveelheid: 500, eenheid: 'gr' },
+          { naam: 'Yoghurt', hoeveelheid: 150, eenheid: 'gr' },
           { naam: 'Kerriepoeder', hoeveelheid: 1, eenheid: 'el' },
-          { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'teentje' }
+          { naam: 'Knoflook', hoeveelheid: 2, eenheid: 'tenen' }
         ],
         instructies: [
           'Meng de yoghurt met kerriepoeder en geperste knoflook.',
@@ -167,7 +178,7 @@ const demoSeedRecipes = [
       {
         naam: 'Saus',
         ingredienten: [
-          { naam: 'Boter', hoeveelheid: 40, eenheid: 'g' },
+          { naam: 'Boter', hoeveelheid: 40, eenheid: 'gr' },
           { naam: 'Ui', hoeveelheid: 1, eenheid: '' },
           { naam: 'Gezeefde tomaten', hoeveelheid: 400, eenheid: 'ml' },
           { naam: 'Slagroom', hoeveelheid: 100, eenheid: 'ml' }
@@ -197,7 +208,7 @@ let demoRecipes = demoSeedRecipes.map((r, idx) => ({
 
 let demoWeekmenu = { Ma: null, Di: null, Wo: null, Do: null, Vr: null, Za: null, Zo: null };
 let demoKoelkast = [];
-let demoInstellingen = { id: 1, huishoud_personen: 2, boodschappen_vinkjes: {} };
+let demoInstellingen = { id: 1, huishoud_personen: 2, boodschappen_vinkjes: {}, boodschappen_thuis: true };
 
 let demoKenmerkOpties = [
   ...DEFAULT_BASIS_OPTIONS.map((naam, i) => ({ id: uuid(), categorie: 'basis', naam, volgorde: i + 1 })),
@@ -260,16 +271,28 @@ export async function fetchRecipes() {
 // Zoekt (of maakt) het canonieke ingrediënt bij een getypte naam: eerst een
 // exacte match op de naam zelf, dan op een bijnaam, anders wordt een nieuw
 // canoniek ingrediënt aangemaakt.
-async function resolveIngredientId(naam) {
+async function resolveIngredientId(naam, afdelingen, voorstel) {
   const clean = naam.trim();
-  const { data: direct, error: dErr } = await supabase.from('ingredients').select('id').ilike('naam', clean).limit(1);
+  const { data: direct, error: dErr } = await supabase.from('ingredients').select('id, afdeling_id').ilike('naam', clean).limit(1);
   check(dErr);
-  if (direct && direct.length) return direct[0].id;
+  if (direct && direct.length) {
+    // Bestaand ingrediënt: de afdeling blijft zoals die is. Alleen als er nog
+    // géén afdeling is, vullen we er een in.
+    if (!direct[0].afdeling_id) {
+      const afdelingId = kiesAfdelingId(clean, voorstel, afdelingen);
+      if (afdelingId) {
+        const { error: uErr } = await supabase.from('ingredients').update({ afdeling_id: afdelingId }).eq('id', direct[0].id);
+        check(uErr);
+      }
+    }
+    return direct[0].id;
+  }
   const { data: aliasRows, error: aErr } = await supabase.from('ingredient_aliassen').select('ingredient_id').ilike('alias', clean).limit(1);
   check(aErr);
   if (aliasRows && aliasRows.length) return aliasRows[0].ingredient_id;
   const volgorde = await nextVolgorde('ingredients');
-  const { data: created, error: cErr } = await supabase.from('ingredients').insert({ naam: clean, volgorde }).select().single();
+  const { data: created, error: cErr } = await supabase.from('ingredients')
+    .insert({ naam: clean, volgorde, afdeling_id: kiesAfdelingId(clean, voorstel, afdelingen) }).select().single();
   check(cErr);
   return created.id;
 }
@@ -279,6 +302,7 @@ async function resolveIngredientId(naam) {
 async function saveOnderdelen(recipeId, onderdelen) {
   const { error: delErr } = await supabase.from('recipe_onderdelen').delete().eq('recipe_id', recipeId);
   check(delErr);
+  const afdelingen = await fetchAfdelingen();
   let volgorde = 1;
   for (const onderdeel of onderdelen) {
     const { data: ro, error: roErr } = await supabase.from('recipe_onderdelen')
@@ -288,7 +312,7 @@ async function saveOnderdelen(recipeId, onderdelen) {
     let ivolgorde = 1;
     for (const ing of (onderdeel.ingredienten || [])) {
       if (!ing.naam) continue;
-      const ingredientId = await resolveIngredientId(ing.naam);
+      const ingredientId = await resolveIngredientId(ing.naam, afdelingen, ing.afdeling);
       const { error: riErr } = await supabase.from('recipe_ingredienten').insert({
         onderdeel_id: ro.id,
         ingredient_id: ingredientId,
@@ -581,12 +605,13 @@ export async function fetchIngredients() {
 export async function addIngredient(naam) {
   const clean = naam.trim();
   if (DEMO_MODE) {
-    const row = { id: uuid(), naam: clean, standaard_eenheid: null, volgorde: maxVolgorde(demoIngredients) + 1 };
+    const row = { id: uuid(), naam: clean, standaard_eenheid: null, volgorde: maxVolgorde(demoIngredients) + 1, afdeling_id: kiesAfdelingId(clean, null, demoAfdelingen), altijd_in_huis: false };
     demoIngredients.push(row);
     return row;
   }
   const volgorde = await nextVolgorde('ingredients');
-  const { data, error } = await supabase.from('ingredients').insert({ naam: clean, volgorde }).select().single();
+  const afdelingen = await fetchAfdelingen();
+  const { data, error } = await supabase.from('ingredients').insert({ naam: clean, volgorde, afdeling_id: kiesAfdelingId(clean, null, afdelingen) }).select().single();
   check(error);
   return data;
 }
@@ -651,6 +676,77 @@ export async function mergeIngredients(vanId, naarId) {
   }
   const { error: delErr } = await supabase.from('ingredients').delete().eq('id', vanId);
   check(delErr);
+}
+
+// ─────────────────────────────── Afdelingen & basisvoorraad
+export async function fetchAfdelingen() {
+  if (DEMO_MODE) return demoAfdelingen.slice().sort(byVolgorde);
+  const { data, error } = await supabase.from('afdelingen').select('*').order('volgorde').order('naam');
+  check(error);
+  return data;
+}
+
+export async function addAfdeling(naam) {
+  const clean = naam.trim();
+  if (DEMO_MODE) {
+    const row = { id: uuid(), naam: clean, volgorde: maxVolgorde(demoAfdelingen) + 1 };
+    demoAfdelingen.push(row);
+    return row;
+  }
+  const volgorde = await nextVolgorde('afdelingen');
+  const { data, error } = await supabase.from('afdelingen').insert({ naam: clean, volgorde }).select().single();
+  check(error);
+  return data;
+}
+
+export async function renameAfdeling(id, naam) {
+  if (DEMO_MODE) { demoAfdelingen = demoAfdelingen.map((a) => (a.id === id ? { ...a, naam } : a)); return; }
+  const { error } = await supabase.from('afdelingen').update({ naam }).eq('id', id);
+  check(error);
+}
+
+// Ingrediënten van een verwijderde afdeling worden "niet ingedeeld".
+export async function deleteAfdeling(id) {
+  if (DEMO_MODE) {
+    demoAfdelingen = demoAfdelingen.filter((a) => a.id !== id);
+    demoIngredients = demoIngredients.map((i) => (i.afdeling_id === id ? { ...i, afdeling_id: null } : i));
+    return;
+  }
+  const { error } = await supabase.from('afdelingen').delete().eq('id', id);
+  check(error);
+}
+
+// updates: [{ id, afdeling_id }] — gegroepeerd per afdeling in één call per afdeling.
+export async function setIngredientAfdelingen(updates) {
+  if (DEMO_MODE) {
+    demoIngredients = demoIngredients.map((i) => {
+      const u = updates.find((x) => x.id === i.id);
+      return u ? { ...i, afdeling_id: u.afdeling_id } : i;
+    });
+    return;
+  }
+  const perAfdeling = new Map();
+  updates.forEach((u) => {
+    const sleutel = u.afdeling_id || '__geen__';
+    if (!perAfdeling.has(sleutel)) perAfdeling.set(sleutel, []);
+    perAfdeling.get(sleutel).push(u.id);
+  });
+  for (const [sleutel, ids] of perAfdeling) {
+    const waarde = sleutel === '__geen__' ? null : sleutel;
+    for (let i = 0; i < ids.length; i += 100) {
+      const { error } = await supabase.from('ingredients').update({ afdeling_id: waarde }).in('id', ids.slice(i, i + 100));
+      check(error);
+    }
+  }
+}
+
+export async function setIngredientBasisvoorraad(id, aan) {
+  if (DEMO_MODE) {
+    demoIngredients = demoIngredients.map((i) => (i.id === id ? { ...i, altijd_in_huis: !!aan } : i));
+    return;
+  }
+  const { error } = await supabase.from('ingredients').update({ altijd_in_huis: !!aan }).eq('id', id);
+  check(error);
 }
 
 // ─────────────────────────────── Opmerkingen-log per recept

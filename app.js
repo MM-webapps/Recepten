@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { DEMO_MODE } from './db.js';
 import { DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
-import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten } from './utils.js';
+import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten, suggestAfdeling, shoppingListToText } from './utils.js';
 
 const state = {
   loaded: false,
@@ -12,6 +12,7 @@ const state = {
   kenmerkOpties: { basis: [], proteine: [], keuken: [] },
   tags: [],
   ingredients: [],
+  afdelingen: [],
   eenheden: [],
   activeTab: 'recepten',
   filters: { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' },
@@ -43,12 +44,13 @@ function hydrateIcons() {
 async function init() {
   root.addEventListener('click', onContainerClick);
   modalRoot.addEventListener('click', onContainerClick);
+  modalRoot.addEventListener('change', onContainerChange);
   root.innerHTML = renderLoading();
   hydrateIcons();
   try {
-    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients, eenheden] = await Promise.all([
+    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients, eenheden, afdelingen] = await Promise.all([
       db.fetchRecipes(), db.fetchWeekmenu(), db.fetchKoelkast(), db.fetchInstellingen(),
-      db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients(), db.fetchEenheden()
+      db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients(), db.fetchEenheden(), db.fetchAfdelingen()
     ]);
     state.recipes = recipes;
     state.weekmenu = weekmenu;
@@ -62,11 +64,59 @@ async function init() {
     state.tags = tags;
     state.ingredients = ingredients;
     state.eenheden = eenheden;
+    state.afdelingen = afdelingen;
     state.loaded = true;
     rerender();
   } catch (e) {
     root.innerHTML = renderLoadError((e && e.message) || 'Onbekende fout.');
     hydrateIcons();
+  }
+}
+
+// Kopieert tekst naar het klembord (met een vangnet voor oudere browsers).
+async function copyText(tekst) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(tekst); return true; }
+  } catch (_) { /* val terug op de oude methode */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = tekst;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_) { return false; }
+}
+
+// Toont even een korte tekst op een knop (bv. "Gekopieerd ✓") en zet hem terug.
+function flashButton(el, tekst) {
+  const oud = el.innerHTML;
+  el.innerHTML = escapeHtml(tekst);
+  setTimeout(() => { if (el.isConnected) { el.innerHTML = oud; hydrateIcons(); } }, 1800);
+}
+
+async function onContainerChange(e) {
+  const t = e.target;
+  if (!t || !t.matches || !t.matches('[data-afdeling-select]')) return;
+  const id = t.dataset.id;
+  const afdelingId = t.value || null;
+  try {
+    await db.setIngredientAfdelingen([{ id, afdeling_id: afdelingId }]);
+    state.ingredients = state.ingredients.map((i) => (i.id === id ? { ...i, afdeling_id: afdelingId } : i));
+    if (state.modal && state.modal.zonderAfdeling && afdelingId) {
+      const row = t.closest('.manage-row');
+      if (row) row.remove();
+    }
+    const zonderKnop = document.querySelector('[data-action="manage-toggle-zonder"]');
+    if (zonderKnop && zonderKnop.lastChild) {
+      zonderKnop.lastChild.textContent = ` Zonder afdeling (${state.ingredients.filter((i) => !i.afdeling_id).length})`;
+    }
+  } catch (err) {
+    state.modal.error = (err && err.message) || 'Opslaan mislukt.';
+    rerender();
   }
 }
 
@@ -406,35 +456,70 @@ function renderKoelkastResults() {
 }
 
 // ─────────────────────────────────────────── Tab: Boodschappenlijst
-function renderBoodschappen() {
+// Eén bron voor scherm én deeltekst: de lijst per afdeling, rekening houdend
+// met Thuis/Alles (basisvoorraad verborgen of niet) en de koelkast.
+function getShoppingView() {
   const fridgeNames = state.fridge.map((f) => f.naam);
   const list = buildShoppingList(state.weekmenu, state.recipes, fridgeNames);
-  if (list.length === 0) {
+  const thuis = state.instellingen.boodschappen_thuis !== false;
+  const byIng = Object.fromEntries(state.ingredients.map((i) => [i.id, i]));
+  const isBasis = (item) => !!(item.ingredientId && byIng[item.ingredientId] && byIng[item.ingredientId].altijd_in_huis);
+  const hidden = thuis ? list.filter(isBasis) : [];
+  const visible = thuis ? list.filter((i) => !isBasis(i)) : list;
+  const teKopen = visible.filter((i) => !i.inHuis);
+  const alInHuis = visible.filter((i) => i.inHuis);
+  const afdelingVan = (item) => (byIng[item.ingredientId] ? byIng[item.ingredientId].afdeling_id : null);
+  const groepen = [];
+  state.afdelingen.forEach((afd) => {
+    const items = teKopen.filter((i) => afdelingVan(i) === afd.id);
+    if (items.length) groepen.push({ titel: afd.naam, items });
+  });
+  const bekend = new Set(state.afdelingen.map((afd) => afd.id));
+  const rest = teKopen.filter((i) => !bekend.has(afdelingVan(i)));
+  if (rest.length) groepen.push({ titel: 'Nog niet ingedeeld', items: rest });
+  return { list, visible, hidden, groepen, alInHuis, thuis };
+}
+
+function renderBoodschappen() {
+  const v = getShoppingView();
+  if (v.list.length === 0) {
     return renderEmptyState('shopping-cart', 'Je weekmenu is nog leeg. Plan eerst een paar dagen in.', { label: 'Naar weekmenu', action: 'go-weekmenu' });
   }
-  const teKopen = list.filter((i) => !i.inHuis);
-  const alInHuis = list.filter((i) => i.inHuis);
   const checked = state.instellingen.boodschappen_vinkjes || {};
-  const checkedCount = list.filter((i) => checked[i.key]).length;
+  const checkedCount = v.visible.filter((i) => checked[i.key]).length;
+  const uitleg = v.thuis
+    ? (v.hidden.length ? `${v.hidden.length} basisproduct${v.hidden.length === 1 ? '' : 'en'} (altijd in huis) staan niet op de lijst.` : '')
+    : 'Alles wordt getoond, ook je basisvoorraad.';
   return `
     <div class="card mb-4" style="padding:16px">
       <div class="flex justify-between items-center flex-wrap gap-3">
         <div>
           <h2 class="display" style="font-size:18px;margin:0 0 2px">Boodschappenlijst</h2>
-          <p class="text-sm text-soft" style="margin:0">${checkedCount} van ${list.length} afgevinkt</p>
+          <p class="text-sm text-soft" style="margin:0">${checkedCount} van ${v.visible.length} afgevinkt</p>
         </div>
-        <button class="btn btn-outline btn-sm" data-action="clear-checked">${icon('rotate-ccw')} Wis vinkjes</button>
+        <div class="flex gap-2 flex-wrap">
+          <button class="btn btn-outline btn-sm" data-action="share-list">${icon('share-2')} Deel lijst</button>
+          <button class="btn btn-outline btn-sm" data-action="clear-checked">${icon('rotate-ccw')} Wis vinkjes</button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap mt-4">
+        <button class="btn btn-sm ${v.thuis ? 'btn-primary' : 'btn-outline'}" data-action="set-thuis" data-waarde="1">${icon('home')} Thuis</button>
+        <button class="btn btn-sm ${v.thuis ? 'btn-outline' : 'btn-primary'}" data-action="set-thuis" data-waarde="0">${icon('luggage')} Alles</button>
+        ${uitleg ? `<span class="text-sm text-soft">${escapeHtml(uitleg)}</span>` : ''}
       </div>
     </div>
-    ${renderShopSection('Nog te kopen', teKopen, checked)}
-    ${alInHuis.length ? renderShopSection('Al in huis', alInHuis, checked, true) : ''}
+    ${v.visible.length === 0 ? renderEmptyState('shopping-cart', 'Alles op je lijst is al in huis.') : ''}
+    ${v.groepen.map((g) => renderShopSection(g.titel, g.items, checked)).join('')}
+    ${v.alInHuis.length ? renderShopSection('Al in huis', v.alInHuis, checked, true) : ''}
   `;
 }
 
 function renderShopSection(title, items, checked, muted) {
+  const klaar = items.filter((i) => checked[i.key]).length;
+  const alles = items.length > 0 && klaar === items.length;
   return `
-    <div class="card mb-4" style="padding:16px;${muted ? 'opacity:.75' : ''}">
-      <h3 class="display" style="font-size:15px;margin:0 0 10px">${escapeHtml(title)} <span class="mono text-soft" style="font-size:12px;font-weight:400">(${items.length})</span></h3>
+    <div class="card mb-4" style="padding:16px;${muted ? 'opacity:.75;' : alles ? 'opacity:.55;' : ''}">
+      <h3 class="display" style="font-size:15px;margin:0 0 10px">${escapeHtml(title)} <span class="mono text-soft" style="font-size:12px;font-weight:400">(${klaar}/${items.length})</span></h3>
       ${[...items.filter((i) => !checked[i.key]), ...items.filter((i) => checked[i.key])].map((item) => `
         <div class="shop-item ${checked[item.key] ? 'checked' : ''}">
           <input type="checkbox" data-action="toggle-checked" data-key="${item.key}" ${checked[item.key] ? 'checked' : ''}>
@@ -482,7 +567,7 @@ function eenheidOptiesHtml(huidigeWaarde) {
 function ingredientRowHtml(ing) {
   ing = ing || {};
   return `
-    <div class="ing-row">
+    <div class="ing-row" data-afdeling="${escapeHtml(ing.afdeling || '')}">
       <input class="input naam" list="ingredient-namen" placeholder="Ingrediënt" value="${escapeHtml(ing.naam || '')}">
       <input class="input aantal" type="number" step="any" placeholder="aantal" value="${ing.hoeveelheid != null ? ing.hoeveelheid : ''}">
       <select class="input eenheid">${eenheidOptiesHtml(ing.eenheid || '')}</select>
@@ -615,10 +700,11 @@ async function handleRecipeFormSubmit(e) {
       .map((row) => ({
         naam: row.querySelector('.naam').value.trim(),
         hoeveelheid: row.querySelector('.aantal').value,
-        eenheid: row.querySelector('.eenheid').value
+        eenheid: row.querySelector('.eenheid').value,
+        afdeling: row.dataset.afdeling || ''
       }))
       .filter((i) => i.naam)
-      .map((i) => ({ naam: i.naam, hoeveelheid: i.hoeveelheid === '' ? null : Number(i.hoeveelheid), eenheid: i.eenheid }));
+      .map((i) => ({ naam: i.naam, hoeveelheid: i.hoeveelheid === '' ? null : Number(i.hoeveelheid), eenheid: i.eenheid, afdeling: i.afdeling }));
     const instructiesText = block.querySelector('.onderdeel-instructies').value;
     const instructies = instructiesText.split('\n').map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
     return { naam, ingredienten, instructies };
@@ -857,6 +943,8 @@ function renderPickResults() {
 }
 
 // ─────────────────────────────────────────── Modal: Kenmerken, tags & ingrediënten beheren
+const MANAGE_PLACEHOLDER = { tags: 'tag', ingredienten: 'ingrediënt', eenheden: 'eenheid', afdelingen: 'afdeling' };
+
 function renderManageModal() {
   const m = state.modal;
   const tabs = [
@@ -865,12 +953,29 @@ function renderManageModal() {
     { key: 'keuken', label: 'Keuken' },
     { key: 'tags', label: 'Tags' },
     { key: 'ingredienten', label: 'Ingrediënten' },
+    { key: 'afdelingen', label: 'Afdelingen' },
+    { key: 'basisvoorraad', label: 'Basisvoorraad' },
     { key: 'eenheden', label: 'Eenheden' }
   ];
-  const items = m.categorie === 'tags' ? state.tags
-    : m.categorie === 'ingredienten' ? state.ingredients
-    : m.categorie === 'eenheden' ? state.eenheden
-    : state.kenmerkOpties[m.categorie];
+  const isBasisTab = m.categorie === 'basisvoorraad';
+  const isIng = m.categorie === 'ingredienten';
+  const items = isBasisTab ? [] : manageItems(m.categorie);
+  const getoond = isIng && m.zonderAfdeling ? items.filter((i) => !i.afdeling_id) : items;
+  const zonderCount = isIng ? items.filter((i) => !i.afdeling_id).length : 0;
+  const body = isBasisTab ? renderBasisvoorraadBody() : `
+        ${isIng ? `
+        <div class="flex gap-2 flex-wrap mb-3">
+          <button class="btn btn-sm ${m.zonderAfdeling ? 'btn-primary' : 'btn-outline'}" data-action="manage-toggle-zonder">${icon('filter')} Zonder afdeling (${zonderCount})</button>
+          <button class="btn btn-outline btn-sm" data-action="manage-auto-afdeling">${icon('wand-2')} Automatisch indelen</button>
+          <button class="btn btn-outline btn-sm" data-action="manage-copy-namen">${icon('copy')} Kopieer namen</button>
+        </div>` : ''}
+        <div id="manage-list" class="mb-3" style="max-height:340px;overflow-y:auto">
+          ${getoond.length === 0 ? `<p class="text-sm text-soft">${isIng && m.zonderAfdeling ? 'Alle ingrediënten hebben een afdeling.' : 'Nog niets toegevoegd.'}</p>` : getoond.map((it) => (isIng ? renderIngredientRow(it, m) : renderManageRow(it, m))).join('')}
+        </div>
+        <div class="flex gap-2">
+          <input id="manage-new-item" class="input" style="flex:1" placeholder="Nieuwe ${MANAGE_PLACEHOLDER[m.categorie] || 'optie'}...">
+          <button class="btn btn-primary btn-sm" data-action="manage-add">${icon('plus')} Toevoegen</button>
+        </div>`;
   return `
     <div class="modal-backdrop">
       <div class="modal-card">
@@ -878,22 +983,66 @@ function renderManageModal() {
           <h2 class="display" style="font-size:20px;margin:0">Beheren</h2>
           <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
         </div>
-        <p class="text-sm text-soft mb-3">Wijzigingen gelden voor alle recepten. Hernoemen werkt overal door; verwijderen kan alleen als niets deze waarde meer gebruikt. Bij ingrediënten kun je twee dubbele varianten ook samenvoegen (bv. "rode ui" → "ui"), zodat de boodschappenlijst ze als één ding optelt. Sleep aan het handvat links om de volgorde te wijzigen; die volgorde zie je ook in de keuzelijsten.</p>
+        <p class="text-sm text-soft mb-3">Wijzigingen gelden voor alle recepten. Hernoemen werkt overal door; verwijderen kan alleen als niets deze waarde meer gebruikt. Bij ingrediënten kun je twee dubbele varianten ook samenvoegen (bv. "rode ui" → "ui"), zodat de boodschappenlijst ze als één ding optelt. Sleep aan het handvat links om de volgorde te wijzigen; die volgorde zie je ook in de keuzelijsten en (bij Afdelingen) op de boodschappenlijst.</p>
         <div class="flex gap-2 mb-4 flex-wrap" style="border-bottom:1px solid var(--line);padding-bottom:12px">
           ${tabs.map((t) => `<button class="btn ${m.categorie === t.key ? 'btn-primary' : 'btn-outline'} btn-sm" data-action="manage-tab" data-categorie="${t.key}">${escapeHtml(t.label)}</button>`).join('')}
         </div>
         ${m.error ? bannerError(m.error) : ''}
-        <div id="manage-list" class="mb-3" style="max-height:340px;overflow-y:auto">
-          ${items.length === 0 ? `<p class="text-sm text-soft">Nog niets toegevoegd.</p>` : items.map((it) => (m.categorie === 'ingredienten' ? renderIngredientRow(it, m) : renderManageRow(it, m))).join('')}
-        </div>
-        <div class="flex gap-2">
-          <input id="manage-new-item" class="input" style="flex:1" placeholder="Nieuwe ${m.categorie === 'tags' ? 'tag' : m.categorie === 'ingredienten' ? 'ingrediënt' : m.categorie === 'eenheden' ? 'eenheid' : 'optie'}...">
-          <button class="btn btn-primary btn-sm" data-action="manage-add">${icon('plus')} Toevoegen</button>
-        </div>
+        ${m.info ? `<div class="banner banner-info" style="margin-bottom:12px">${icon('info')}<span>${escapeHtml(m.info)}</span></div>` : ''}
+        ${body}
       </div>
     </div>
   `;
 }
+
+// ── Basisvoorraad: ingrediënten die altijd in huis zijn (niet op de lijst in Thuis-modus)
+function basisLijstHtml() {
+  const lijst = state.ingredients.filter((i) => i.altijd_in_huis).slice().sort((a, b) => a.naam.localeCompare(b.naam));
+  if (lijst.length === 0) return `<p class="text-sm text-soft">Nog niets. Voeg hieronder ingrediënten toe met het plusje.</p>`;
+  return lijst.map((i) => `
+    <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <span class="text-sm" style="flex:1">${escapeHtml(i.naam)}</span>
+      <button class="btn btn-outline btn-sm btn-icon" data-action="basis-remove" data-id="${i.id}" title="Niet meer altijd in huis">${icon('x')}</button>
+    </div>`).join('');
+}
+
+function basisKandidatenHtml() {
+  const zoek = normName((state.modal && state.modal.zoek) || '');
+  const lijst = state.ingredients
+    .filter((i) => !i.altijd_in_huis && (!zoek || normName(i.naam).includes(zoek)))
+    .slice().sort((a, b) => a.naam.localeCompare(b.naam));
+  if (lijst.length === 0) return `<p class="text-sm text-soft">${zoek ? 'Geen ingrediënt gevonden.' : 'Alle ingrediënten staan al in je basisvoorraad.'}</p>`;
+  return lijst.map((i) => `
+    <div class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <span class="text-sm" style="flex:1">${escapeHtml(i.naam)}</span>
+      <button class="btn btn-outline btn-sm btn-icon" data-action="basis-add" data-id="${i.id}" title="Altijd in huis">${icon('plus')}</button>
+    </div>`).join('');
+}
+
+function renderBasisvoorraadBody() {
+  const m = state.modal;
+  const aantal = state.ingredients.filter((i) => i.altijd_in_huis).length;
+  return `
+    <h3 class="display" style="font-size:15px;margin:0 0 4px">Altijd in huis <span id="basis-aantal" class="mono text-soft" style="font-size:12px;font-weight:400">(${aantal})</span></h3>
+    <p class="text-sm text-soft mb-3">Dit komt niet op de boodschappenlijst als die op <strong>Thuis</strong> staat. Zet je de lijst op <strong>Alles</strong> (bv. voor een vakantie), dan staan ze er wel op.</p>
+    <div id="basis-lijst" class="mb-4" style="max-height:200px;overflow-y:auto">${basisLijstHtml()}</div>
+    <h3 class="display" style="font-size:15px;margin:0 0 8px">Toevoegen</h3>
+    <input id="basis-zoek" class="input mb-2" placeholder="Zoek een ingrediënt..." value="${escapeHtml(m.zoek || '')}">
+    <div id="basis-kandidaten" style="max-height:240px;overflow-y:auto">${basisKandidatenHtml()}</div>
+  `;
+}
+
+function refreshBasisvoorraad() {
+  const lijst = document.getElementById('basis-lijst');
+  const kand = document.getElementById('basis-kandidaten');
+  const aantal = document.getElementById('basis-aantal');
+  if (lijst) lijst.innerHTML = basisLijstHtml();
+  if (kand) kand.innerHTML = basisKandidatenHtml();
+  if (aantal) aantal.textContent = `(${state.ingredients.filter((i) => i.altijd_in_huis).length})`;
+  hydrateIcons();
+}
+
+const DRAG_HANDLE_HTML = () => `<span class="drag-handle" data-drag-handle title="Sleep om de volgorde te wijzigen">${icon('grip-vertical')}</span>`;
 
 function renderManageRow(item, m) {
   const isRenaming = m.renameId === item.id;
@@ -908,12 +1057,18 @@ function renderManageRow(item, m) {
   }
   return `
     <div class="flex items-center gap-2 manage-row" data-id="${item.id}" style="padding:6px 0;border-bottom:1px solid var(--line)">
-      <span class="drag-handle" data-drag-handle title="Sleep om de volgorde te wijzigen">${icon('grip-vertical')}</span>
-      <span class="text-sm" style="flex:1">${escapeHtml(item.naam)}</span>
+      ${DRAG_HANDLE_HTML()}<span class="text-sm" style="flex:1">${escapeHtml(item.naam)}</span>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-start" data-id="${item.id}">${icon('pencil')}</button>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-delete" data-id="${item.id}" data-naam="${escapeHtml(item.naam)}">${icon('trash-2')}</button>
     </div>
   `;
+}
+
+function afdelingSelectHtml(item) {
+  return `<select class="input" data-afdeling-select data-id="${item.id}" style="width:100%;max-width:240px;margin-top:4px;padding:4px 8px;font-size:12.5px">
+    <option value="">(geen afdeling)</option>
+    ${state.afdelingen.map((a) => `<option value="${a.id}" ${a.id === item.afdeling_id ? 'selected' : ''}>${escapeHtml(a.naam)}</option>`).join('')}
+  </select>`;
 }
 
 function renderIngredientRow(item, m) {
@@ -943,8 +1098,11 @@ function renderIngredientRow(item, m) {
   }
   return `
     <div class="flex items-center gap-2 manage-row" data-id="${item.id}" style="padding:6px 0;border-bottom:1px solid var(--line)">
-      <span class="drag-handle" data-drag-handle title="Sleep om de volgorde te wijzigen">${icon('grip-vertical')}</span>
-      <span class="text-sm" style="flex:1">${escapeHtml(item.naam)}</span>
+      ${m.zonderAfdeling ? '' : DRAG_HANDLE_HTML()}
+      <div style="flex:1;min-width:0">
+        <div class="text-sm">${escapeHtml(item.naam)}</div>
+        ${afdelingSelectHtml(item)}
+      </div>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-merge-start" data-id="${item.id}" title="Samenvoegen met ander ingrediënt">${icon('git-merge')}</button>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-rename-start" data-id="${item.id}">${icon('pencil')}</button>
       <button class="btn btn-outline btn-sm btn-icon" data-action="manage-delete" data-id="${item.id}" data-naam="${escapeHtml(item.naam)}">${icon('trash-2')}</button>
@@ -1116,6 +1274,72 @@ async function handleAction(action, el) {
       rerender();
       break;
 
+    case 'set-thuis': {
+      const waarde = el.dataset.waarde === '1';
+      state.instellingen = { ...state.instellingen, boodschappen_thuis: waarde };
+      await db.updateInstellingen({ boodschappen_thuis: waarde });
+      rerender();
+      break;
+    }
+
+    case 'share-list': {
+      const v = getShoppingView();
+      const checked = state.instellingen.boodschappen_vinkjes || {};
+      const groepen = v.groepen
+        .map((g) => ({ titel: g.titel, items: g.items.filter((i) => !checked[i.key]) }))
+        .filter((g) => g.items.length);
+      if (groepen.length === 0) { flashButton(el, 'Niets te delen'); break; }
+      const tekst = shoppingListToText(groepen);
+      if (navigator.share) {
+        try { await navigator.share({ title: 'Boodschappen', text: tekst }); break; }
+        catch (err) { if (err && err.name === 'AbortError') break; }
+      }
+      const ok = await copyText(tekst);
+      flashButton(el, ok ? 'Gekopieerd ✓' : 'Kopiëren mislukt');
+      break;
+    }
+
+    case 'manage-toggle-zonder':
+      state.modal.zonderAfdeling = !state.modal.zonderAfdeling;
+      state.modal.info = '';
+      rerender();
+      break;
+
+    case 'manage-auto-afdeling': {
+      const perNaam = new Map(state.afdelingen.map((x) => [normName(x.naam), x.id]));
+      const updates = [];
+      let onbekend = 0;
+      state.ingredients.filter((i) => !i.afdeling_id).forEach((i) => {
+        const voorstel = suggestAfdeling(i.naam);
+        const afdelingId = voorstel ? perNaam.get(normName(voorstel)) : null;
+        if (afdelingId) updates.push({ id: i.id, afdeling_id: afdelingId }); else onbekend++;
+      });
+      if (updates.length) await db.setIngredientAfdelingen(updates);
+      const nieuw = new Map(updates.map((u) => [u.id, u.afdeling_id]));
+      state.ingredients = state.ingredients.map((i) => (nieuw.has(i.id) ? { ...i, afdeling_id: nieuw.get(i.id) } : i));
+      state.modal.info = `${updates.length} ingrediënt${updates.length === 1 ? '' : 'en'} ingedeeld, ${onbekend} niet herkend. Controleer de indeling gerust: je kunt elke afdeling zelf aanpassen.`;
+      state.modal.error = '';
+      rerender();
+      break;
+    }
+
+    case 'manage-copy-namen': {
+      const lijst = state.modal.zonderAfdeling ? state.ingredients.filter((i) => !i.afdeling_id) : state.ingredients;
+      const ok = await copyText(lijst.map((i) => i.naam).join('\n'));
+      flashButton(el, ok ? `${lijst.length} namen gekopieerd ✓` : 'Kopiëren mislukt');
+      break;
+    }
+
+    case 'basis-add':
+    case 'basis-remove': {
+      const aan = action === 'basis-add';
+      const id = el.dataset.id;
+      await db.setIngredientBasisvoorraad(id, aan);
+      state.ingredients = state.ingredients.map((i) => (i.id === id ? { ...i, altijd_in_huis: aan } : i));
+      refreshBasisvoorraad();
+      break;
+    }
+
     case 'open-shop-item':
       state.modal = { type: 'shop-item', key: el.dataset.key };
       rerender();
@@ -1264,6 +1488,9 @@ async function handleAction(action, el) {
       state.modal.categorie = el.dataset.categorie;
       state.modal.renameId = null;
       state.modal.mergeId = null;
+      state.modal.zonderAfdeling = false;
+      state.modal.zoek = '';
+      state.modal.info = '';
       state.modal.error = '';
       rerender();
       break;
@@ -1280,6 +1507,9 @@ async function handleAction(action, el) {
         } else if (categorie === 'ingredienten') {
           const row = await db.addIngredient(naam);
           state.ingredients = [...state.ingredients, row];
+        } else if (categorie === 'afdelingen') {
+          const row = await db.addAfdeling(naam);
+          state.afdelingen = [...state.afdelingen, row];
         } else if (categorie === 'eenheden') {
           const row = await db.addEenheid(naam);
           state.eenheden = [...state.eenheden, row];
@@ -1327,6 +1557,9 @@ async function handleAction(action, el) {
               ingredienten: o.ingredienten.map((ing) => (ing.ingredientId === id ? { ...ing, naam: nieuweNaam } : ing))
             }))
           }));
+        } else if (categorie === 'afdelingen') {
+          await db.renameAfdeling(id, nieuweNaam);
+          state.afdelingen = state.afdelingen.map((x) => (x.id === id ? { ...x, naam: nieuweNaam } : x));
         } else if (categorie === 'eenheden') {
           const oud = state.eenheden.find((e) => e.id === id);
           const oudeNaam = oud ? oud.naam : null;
@@ -1394,6 +1627,8 @@ async function handleAction(action, el) {
       state.confirm = {
         message: categorie === 'tags'
           ? `Tag "${naam}" verwijderen? Dit haalt hem ook weg bij recepten die hem gebruiken.`
+          : categorie === 'afdelingen'
+            ? `Afdeling "${naam}" verwijderen? De ingrediënten in deze afdeling worden "niet ingedeeld".`
           : categorie === 'ingredienten'
             ? `Ingrediënt "${naam}" verwijderen?`
             : `"${naam}" verwijderen?`,
@@ -1406,6 +1641,10 @@ async function handleAction(action, el) {
             } else if (categorie === 'ingredienten') {
               await db.deleteIngredient(id);
               state.ingredients = state.ingredients.filter((i) => i.id !== id);
+            } else if (categorie === 'afdelingen') {
+              await db.deleteAfdeling(id);
+              state.afdelingen = state.afdelingen.filter((x) => x.id !== id);
+              state.ingredients = state.ingredients.map((i) => (i.afdeling_id === id ? { ...i, afdeling_id: null } : i));
             } else if (categorie === 'eenheden') {
               await db.deleteEenheid(id, naam);
               state.eenheden = state.eenheden.filter((e) => e.id !== id);
@@ -1432,12 +1671,13 @@ async function handleAction(action, el) {
 }
 
 // ─────────────────────────────────────────── Slepen in Beheren (pointer events: werkt met muis en touch)
-const MANAGE_TABELLEN = { tags: 'tags', ingredienten: 'ingredients', eenheden: 'eenheden' };
+const MANAGE_TABELLEN = { tags: 'tags', ingredienten: 'ingredients', eenheden: 'eenheden', afdelingen: 'afdelingen' };
 
 function manageItems(categorie) {
   return categorie === 'tags' ? state.tags
     : categorie === 'ingredienten' ? state.ingredients
     : categorie === 'eenheden' ? state.eenheden
+    : categorie === 'afdelingen' ? state.afdelingen
     : state.kenmerkOpties[categorie];
 }
 
@@ -1445,6 +1685,7 @@ function setManageItems(categorie, lijst) {
   if (categorie === 'tags') state.tags = lijst;
   else if (categorie === 'ingredienten') state.ingredients = lijst;
   else if (categorie === 'eenheden') state.eenheden = lijst;
+  else if (categorie === 'afdelingen') state.afdelingen = lijst;
   else state.kenmerkOpties[categorie] = lijst;
 }
 
@@ -1527,6 +1768,13 @@ function wireDynamicListeners() {
   });
 
   wireManageDrag();
+
+  const basisZoek = document.getElementById('basis-zoek');
+  if (basisZoek) basisZoek.addEventListener('input', () => {
+    state.modal.zoek = basisZoek.value;
+    const kand = document.getElementById('basis-kandidaten');
+    if (kand) { kand.innerHTML = basisKandidatenHtml(); hydrateIcons(); }
+  });
 
   const form = document.getElementById('recipe-form');
   if (form) form.addEventListener('submit', handleRecipeFormSubmit);

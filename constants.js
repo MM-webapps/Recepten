@@ -18,7 +18,15 @@ export const DEFAULT_KEUKEN_OPTIONS = [
   'Mexicaans', 'Indiaas', 'Midden-Oosters', 'Overig'
 ];
 
-export const DEFAULT_EENHEDEN = ['g', 'kg', 'ml', 'l', 'el', 'tl', 'stuks', 'teentje', 'snufje', 'blikje'];
+export const DEFAULT_EENHEDEN = ['gr', 'kg', 'ml', 'l', 'el', 'tl', 'st', 'tenen', 'snufje', 'blikje'];
+
+// Afdelingen in een gebruikelijke supermarkt-volgorde. In de app zijn ze
+// beheerbaar en sleepbaar (Beheren → Afdelingen); dit is de startlijst.
+export const DEFAULT_AFDELINGEN = [
+  'Groente & fruit', 'Brood & bakkerij', 'Vlees & vis', 'Zuivel & eieren',
+  'Pasta, rijst & granen', 'Wereldkeuken & sauzen', 'Conserven & houdbaar',
+  'Kruiden & olie', 'Diepvries', 'Dranken', 'Overig'
+];
 
 export const DAGEN = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
 

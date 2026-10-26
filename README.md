@@ -113,7 +113,7 @@ In de app, via **Nieuw recept**, kies je tussen:
   (bv. "rode ui" en "ui") handmatig **samenvoegen** tot één — de
   boodschappenlijst telt ze daarna als één ding op, ook met terugwerkende
   kracht.
-- **Eenheden worden genormaliseerd:** "gr", "gram" en "g" (en zo ook bij
+- **Eenheden worden genormaliseerd:** "g", "gram" en "gr" (en zo ook bij
   el/eetlepel, tl/theelepel, etc.) worden intern allemaal dezelfde
   eenheid, zodat de boodschappenlijst hoeveelheden goed kan optellen. In
   het formulier kies je de eenheid nu uit een lijstje in plaats van vrije
@@ -140,7 +140,7 @@ toe:
 
 ## 7. Nieuw: eenheden beheren
 
-De keuzelijst met eenheden (g, kg, ml, l, el, tl, stuks, teentje, snufje,
+De keuzelijst met eenheden (gr, kg, ml, l, el, tl, st, tenen, snufje,
 blikje) staat niet meer vast in de code, maar in Supabase, en is te
 beheren via **Beheren → Eenheden**: toevoegen, hernoemen (werkt automatisch
 door naar alle receptregels die die eenheid gebruiken) en verwijderen
@@ -148,7 +148,7 @@ door naar alle receptregels die die eenheid gebruiken) en verwijderen
 "teentje" naar "tenen" hernoemen, dan kan dat daar.
 
 Let op één detail: bij een JSON-import (via de AI-prompt) blijft een kleine
-vaste lijst met veelgebruikte schrijfwijzen bestaan (zoals "gram" → "g",
+vaste lijst met veelgebruikte schrijfwijzen bestaan (zoals "gram" → "gr",
 "theelepel" → "tl"), onafhankelijk van wat je hierboven beheert. Hernoem je
 een eenheid, dan werkt dat meteen door in je bestaande recepten en in de
 keuzelijst van het formulier — een AI-import die toevallig de oude
@@ -201,3 +201,29 @@ de keuzelijsten. Nieuwe items komen onderaan.
 **Voor deze update moet je `schema.sql` opnieuw draaien in Supabase** (hele
 bestand plakken, Run): het voegt een `volgorde`-kolom toe aan `tags` en
 `ingredients` en nummert bestaande rijen eenmalig op alfabet.
+
+## Afdelingen, basisvoorraad en lijst delen
+
+- **Afdelingen** (Beheren → Afdelingen): de afdelingen van de supermarkt, in
+  jouw looproute. Sleep ze in de juiste volgorde; de boodschappenlijst volgt
+  die volgorde. Elk ingrediënt hoort bij één afdeling (Beheren →
+  Ingrediënten, keuzelijst onder de naam).
+- **Automatisch indelen** (Beheren → Ingrediënten): deelt alle ingrediënten
+  zonder afdeling in met een lijst trefwoorden. Wat niet herkend wordt, vind
+  je met het filter **Zonder afdeling**; **Kopieer namen** kopieert die lijst
+  (bv. om te laten indelen door een AI).
+- **Nieuwe ingrediënten** uit een import krijgen automatisch een afdeling
+  (uit het veld `afdeling` van de JSON, anders de trefwoorden). Een
+  ingrediënt dat al bestaat houdt zijn afdeling.
+- **Basisvoorraad** (Beheren → Basisvoorraad): ingrediënten die je altijd in
+  huis hebt (zout, olie, boter...). Zoek een ingrediënt en tik op het plusje.
+- **Thuis / Alles** (boven de boodschappenlijst): in *Thuis* staat je
+  basisvoorraad niet op de lijst, in *Alles* wel (handig voor een vakantie).
+- **Deel lijst**: deelt wat je nog moet kopen, per afdeling, als tekst (op je
+  telefoon via het deelmenu, bv. naar WhatsApp; op een computer wordt het
+  gekopieerd).
+
+**Voor deze update moet je `schema.sql` opnieuw draaien in Supabase.** Dit
+voegt de tabel `afdelingen` toe (met een startlijst) en de kolommen
+`ingredients.afdeling_id`, `ingredients.altijd_in_huis` en
+`instellingen.boodschappen_thuis`. Bestaande data blijft ongemoeid.

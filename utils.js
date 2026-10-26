@@ -19,22 +19,23 @@ export function normName(s) {
 // De keuzelijst met eenheden zelf staat niet meer hier, maar in Supabase
 // (tabel "eenheden", beheerbaar via de app). Deze aliassen zijn een losse,
 // vaste vangnet-normalisatie voor tekst die uit een JSON-import komt (bv.
-// van een AI die "gram" typt in plaats van "g") — onafhankelijk van welke
+// van een AI die "gram" typt in plaats van "gr") — onafhankelijk van welke
 // eenheden je op dit moment beheert.
 const EENHEID_ALIASSEN = {
-  'gram': 'g', 'grammen': 'g', 'gr': 'g',
+  'gram': 'gr', 'grammen': 'gr', 'g': 'gr',
   'kilogram': 'kg', 'kilo': 'kg',
   'milliliter': 'ml',
   'liter': 'l', 'ltr': 'l',
   'eetlepel': 'el', 'eetlepels': 'el', 'tbsp': 'el',
   'theelepel': 'tl', 'theelepels': 'tl', 'tsp': 'tl',
-  'stuk': 'stuks', 'stk': 'stuks',
-  'teen': 'teentje', 'teentjes': 'teentje',
+  'stuk': 'st', 'stuks': 'st', 'stk': 'st',
+  'teen': 'tenen', 'teentje': 'tenen', 'teentjes': 'tenen',
   'snuf': 'snufje', 'snufjes': 'snufje',
   'blik': 'blikje', 'blikjes': 'blikje'
 };
 
-// Zet "gr"/"gram"/"Gram" allemaal om naar dezelfde schrijfwijze ("g").
+// Zet "g"/"gram"/"Gram" allemaal om naar dezelfde schrijfwijze ("gr"),
+// en "stuk"/"stuks" naar "st".
 // Onbekende eenheden worden alleen getrimd/lowercase gemaakt, niet
 // weggegooid.
 export function normalizeEenheid(input) {
@@ -78,7 +79,7 @@ export function fridgeMatchForRecipe(recipe, fridgeItems) {
 // van het aantal personen waar het recept oorspronkelijk voor bedoeld is.
 // Er wordt opgeteld op het canonieke ingredient_id (+ eenheid) in plaats van
 // op losse tekst, zodat "ui" uit twee recepten samen op één regel komt, ook
-// als de een "gr" en de ander "gram" schreef.
+// als de een "g" en de ander "gram" schreef.
 export function buildShoppingList(weekmenu, recipes, fridgeItems) {
   const byId = Object.fromEntries(recipes.map((r) => [r.id, r]));
   const agg = {};
@@ -96,7 +97,7 @@ export function buildShoppingList(weekmenu, recipes, fridgeItems) {
       const hoeveelheid = (typeof ing.hoeveelheid === 'number' && !isNaN(ing.hoeveelheid))
         ? ing.hoeveelheid * factor : null;
       if (!agg[key]) {
-        agg[key] = { key, naam: ing.naam, eenheid, hoeveelheid, bronnen: [] };
+        agg[key] = { key, ingredientId: ing.ingredientId || null, naam: ing.naam, eenheid, hoeveelheid, bronnen: [] };
       } else if (hoeveelheid !== null) {
         agg[key].hoeveelheid = (agg[key].hoeveelheid || 0) + hoeveelheid;
       }
@@ -143,6 +144,7 @@ function normalizeOnderdeel(raw) {
       ? raw.ingredienten
           .map((ing) => ({
             naam: ing && ing.naam ? String(ing.naam).trim() : '',
+            afdeling: ing && ing.afdeling ? String(ing.afdeling).trim() : '',
             hoeveelheid: ing && ing.hoeveelheid !== '' && ing.hoeveelheid != null && !isNaN(Number(ing.hoeveelheid))
               ? Number(ing.hoeveelheid) : null,
             eenheid: ing && ing.eenheid ? normalizeEenheid(String(ing.eenheid)) : '',
@@ -194,4 +196,60 @@ export function formatDatumNL(isoDatum) {
 
 export function slugify(str) {
   return (str || 'recept').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'recept';
+}
+
+// ─────────────────────────────── Afdeling voorstellen (trefwoordenregels)
+// Wordt alleen gebruikt voor NIEUWE ingrediënten zonder afdeling en voor de
+// knop "Automatisch indelen". De eerste regel die past wint, dus de
+// specifieke regels staan bovenaan. Trefwoord-notatie:
+//   "kip"   = begin van een woord  (kip, kipfilet, kippendij)
+//   "~olie" = overal in het woord  (olijfolie, sesamolie)
+//   "ei!"   = alleen het hele woord (ei, niet eiland)
+const AFDELING_REGELS = [
+  ['Conserven & houdbaar', ['bakpoeder', '~bouillon', 'fond!', 'tomatenpuree', 'passata', 'gezeefde', 'tomatenblokjes', 'blik', 'ingeblikt', 'kikkererwten', 'kidneybonen', 'witte bonen', 'bruine bonen', 'zwarte bonen', 'bonen!', 'linzen', 'mais!', 'maiskorrels', 'olijven', 'kappertjes', 'augurk', 'pindakaas', '~jam', 'honing', 'suiker', 'bloem!', '~meel', 'maizena', 'paneermeel', 'gist', 'hagelslag', 'pindas', 'noten', 'amandel', 'cashew', 'walnoot', 'hazelnoot', 'pijnboompitten', 'rozijnen', 'tonijn', 'sardine', 'ansjovis']],
+  ['Groente & fruit', ['rode peper', 'groene peper', 'spaanse peper', 'chilipeper', 'peperoni', 'jalapeno']],
+  ['Wereldkeuken & sauzen', ['currypasta', 'kerriepasta', '~saus', 'sambal', 'harissa', 'miso', 'tahin', 'pesto', 'sriracha', 'ketjap', 'hoisin', 'kokosmelk', 'kokosroom', 'santen', 'wasabi', 'salsa', 'ketchup', 'mayonaise', 'mosterd', 'teriyaki', 'gochujang', 'tortillachips', 'taco', 'nacho', 'hummus', 'guacamole']],
+  ['Kruiden & olie', ['~olie', '~azijn', '~poeder', 'zout', '~zeezout', '~keukenzout', 'peper!', '~kruiden', 'gedroogd', 'laurier', 'kruidnagel', 'kardemom', 'saffraan', 'vanille', 'komijn', 'kurkuma', 'kaneel', 'nootmuskaat', 'oregano', 'garam', 'masala', 'kerrie', 'curry!', 'cayenne', 'piment', 'venkelzaad', 'sesamzaad', 'chilivlokken', '~vlokken', 'ras el hanout', 'zaatar', 'sumak']],
+  ['Diepvries', ['diepvries', 'bevroren', 'bladerdeeg', 'frites', 'friet']],
+  ['Zuivel & eieren', ['melk', '~melk', 'yoghurt', 'kwark', 'room', 'slagroom', 'creme fraiche', 'kaas', '~kaas', '~boter', 'margarine', 'ei!', 'eieren', 'eiwit', 'eidooier', 'mozzarella', 'parmezaan', 'parmigiano', 'pecorino', 'feta', 'ricotta', 'mascarpone', 'cheddar', 'gouda', 'brie', 'camembert', 'halloumi', 'paneer', 'boursin', 'vla', 'skyr']],
+  ['Vlees & vis', ['kip', 'kalkoen', 'gehakt', 'rundvlees', 'rund', 'varkens', 'spek', 'ham!', 'hamlap', 'worst', 'braadworst', 'rookworst', 'bacon', 'biefstuk', 'entrecote', 'lams', 'eend', 'schnitzel', 'shoarma', 'kebab', 'chorizo', 'salami', 'pancetta', 'prosciutto', 'vlees', 'filet', 'ribs', 'slavink', 'hamburger', 'vis', 'zalm', 'kabeljauw', 'forel', 'makreel', 'haring', 'garnaal', 'gamba', 'mosselen', 'inktvis', 'schol', 'tilapia', 'pangasius', 'zeevruchten', 'lapjes', 'stoofvlees', 'balletjes']],
+  ['Brood & bakkerij', ['brood', 'broodje', 'stokbrood', 'bol!', 'bollen', 'pistolet', 'wrap', 'tortilla', 'pita', 'naan', 'chapati', 'roti', 'bagel', 'croissant', 'toast', 'beschuit', 'cracker', 'pizzabodem', 'pizzadeeg', 'focaccia', 'ciabatta']],
+  ['Groente & fruit', ['ui', 'uien', 'sjalot', 'knoflook', 'prei', 'lente', 'bosui', 'tomaat', 'tomaten', 'kerstomaat', 'cherry', 'komkommer', 'paprika', 'courgette', 'aubergine', 'wortel', 'peen', 'aardappel', 'krieltjes', 'zoete aardappel', 'bataat', 'pompoen', 'broccoli', 'bloemkool', 'spinazie', 'sla', 'ijsbergsla', 'rucola', 'andijvie', 'spruitjes', 'boerenkool', 'kool', 'witlof', 'sperziebonen', 'snijbonen', 'doperwten', 'erwten', 'champignon', 'paddenstoel', 'oesterzwam', 'shiitake', 'maiskolf', 'avocado', 'citroen', 'limoen', 'sinaasappel', 'appel', 'peer', 'banaan', 'druiven', 'aardbei', 'framboos', 'bosbes', 'blauwe bessen', 'mango', 'ananas', 'meloen', 'kiwi', 'perzik', 'nectarine', 'pruim', 'gember', 'koriander', 'peterselie', 'basilicum', 'munt', 'bieslook', 'dille', 'tijm', 'rozemarijn', 'salie', 'selderij', 'bleekselderij', 'venkel', 'radijs', 'knolselderij', 'pastinaak', 'biet', 'asperge', 'artisjok', 'edamame', 'taugee', 'paksoi', 'citroengras', 'groente', 'fruit', 'salade', 'veldsla', 'rabarber', 'abrikoos', 'granaatappel', 'vijgen']],
+  ['Pasta, rijst & granen', ['pasta', 'spaghetti', 'penne', 'macaroni', 'fusilli', 'farfalle', 'tagliatelle', 'lasagne', 'rigatoni', 'linguine', 'fettuccine', 'orzo', 'gnocchi', 'rijst', 'basmati', 'jasmijn', 'risotto', 'noedel', 'mie!', 'mihoen', 'udon', 'ramen', 'soba', 'couscous', 'bulgur', 'quinoa', 'havermout', 'muesli', 'cornflakes', 'gries', 'polenta', 'cannelloni', 'vermicelli', 'tortelloni', 'ravioli']],
+  ['Dranken', ['wijn', 'bier', 'sap!', 'jus', 'water!', 'cola', 'limonade', 'frisdrank', 'koffie', 'thee', 'prosecco', 'whisky', 'tonic']]
+];
+
+const AFDELING_REGELS_RE = AFDELING_REGELS.map(([afdeling, woorden]) => [
+  afdeling,
+  woorden.map((w) => {
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (w.startsWith('~')) return new RegExp(esc(w.slice(1)));
+    if (w.endsWith('!')) return new RegExp('(^|[^a-z])' + esc(w.slice(0, -1)) + '(?![a-z])');
+    return new RegExp('(^|[^a-z])' + esc(w));
+  })
+]);
+
+// Geeft de NAAM van een voorgestelde afdeling terug, of null als geen regel past.
+export function suggestAfdeling(naam) {
+  const n = normName(naam);
+  if (!n) return null;
+  for (const [afdeling, regexen] of AFDELING_REGELS_RE) {
+    if (regexen.some((re) => re.test(n))) return afdeling;
+  }
+  return null;
+}
+
+// Maakt een deelbare tekst van de boodschappenlijst, gegroepeerd per afdeling.
+// groepen: [{ titel, items: [{ naam, hoeveelheid, eenheid }] }]
+export function shoppingListToText(groepen) {
+  const regels = ['Boodschappen'];
+  groepen.forEach((g) => {
+    if (!g.items.length) return;
+    regels.push('', g.titel);
+    g.items.forEach((i) => {
+      const hoev = i.hoeveelheid != null ? ` ${i.hoeveelheid}${i.eenheid ? ' ' + i.eenheid : ''}` : '';
+      regels.push(`- ${i.naam}${hoev}`);
+    });
+  });
+  return regels.join('\n');
 }
