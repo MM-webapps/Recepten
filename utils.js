@@ -165,6 +165,11 @@ function normalizeOnderdeel(raw) {
 // automatisch als één naamloos onderdeel behandeld.
 export function normalizeRecipeJson(raw, basisOptions, proteineOptions, keukenOptions) {
   raw = raw || {};
+  const minuten = (v) => (Number(v) > 0 ? Math.round(Number(v)) : null);
+  const voor = minuten(raw.voorbereidingstijd);
+  const oven = minuten(raw.oventijd);
+  // Is de tijd opgesplitst, dan is het totaal altijd de som van de twee.
+  const totaal = voor != null || oven != null ? (voor || 0) + (oven || 0) : (minuten(raw.bereidingstijd) || 30);
   const pick = (val, options, fallback) => {
     if (!val) return fallback;
     const found = options.find((o) => o.toLowerCase() === String(val).toLowerCase());
@@ -179,7 +184,9 @@ export function normalizeRecipeJson(raw, basisOptions, proteineOptions, keukenOp
     proteine: pick(raw.proteine, proteineOptions, proteineOptions[proteineOptions.length - 1]),
     keuken: pick(raw.keuken, keukenOptions, keukenOptions[keukenOptions.length - 1]),
     personen: Number(raw.personen) > 0 ? Math.round(Number(raw.personen)) : 4,
-    bereidingstijd: Number(raw.bereidingstijd) > 0 ? Math.round(Number(raw.bereidingstijd)) : 30,
+    bereidingstijd: totaal,
+    voorbereidingstijd: voor,
+    oventijd: oven,
     onderdelen,
     bron: raw.bron ? String(raw.bron).trim() : ''
   };

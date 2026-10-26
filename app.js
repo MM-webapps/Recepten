@@ -237,6 +237,23 @@ function renderPill(field, value) {
   return `<span class="pill" style="background:${s.bg};color:${s.color}">${icon(s.icon)}${escapeHtml(value)}</span>`;
 }
 
+// Een bron kan een link zijn (https://...) of gewone tekst, bv. "Ottolenghi Simple, blz 45".
+function bronInfo(bron) {
+  const b = (bron || '').trim();
+  if (!b) return null;
+  if (/^https?:\/\//i.test(b)) {
+    let tekst = b;
+    try { tekst = new URL(b).hostname.replace(/^www\./, ''); } catch (_) { /* laat de volledige link staan */ }
+    return { url: b, tekst };
+  }
+  return { url: null, tekst: b };
+}
+
+function tijdTekst(recipe) {
+  const actief = recipe.voorbereidingstijd > 0 && recipe.oventijd > 0 ? ` · ${recipe.voorbereidingstijd} actief` : '';
+  return `${recipe.bereidingstijd} min${actief}`;
+}
+
 function renderRecipeCard(recipe, matchInfo, action) {
   const tags = recipe.tags || [];
   return `
@@ -247,9 +264,10 @@ function renderRecipeCard(recipe, matchInfo, action) {
       </div>
       ${tags.length ? `<div class="pills mb-2">${tags.map((t) => `<span class="tag-chip-sm">${escapeHtml(t.naam)}</span>`).join('')}</div>` : ''}
       <div class="recipe-meta mono">
-        <span>${icon('clock')}${recipe.bereidingstijd} min</span>
+        <span>${icon('clock')}${tijdTekst(recipe)}</span>
         <span>${icon('users')}${recipe.personen}p</span>
       </div>
+      ${(() => { const b = bronInfo(recipe.bron); return b ? `<div class="recipe-bron">${icon(b.url ? 'link' : 'book-open')}<span>${escapeHtml(b.tekst)}</span></div>` : ''; })()}
       ${matchInfo ? `
         <div class="mt-4">
           <div class="flex justify-between text-sm mb-1"><span>${matchInfo.matched}/${matchInfo.total} in huis</span><span>${matchInfo.pct}%</span></div>
@@ -309,7 +327,8 @@ function filterRecipes(recipes, filters) {
       const q = filters.zoek.toLowerCase();
       const inTitle = r.titel.toLowerCase().includes(q);
       const inIng = alleIngredienten(r).some((i) => (i.naam || '').toLowerCase().includes(q));
-      if (!inTitle && !inIng) return false;
+      const inBron = (r.bron || '').toLowerCase().includes(q);
+      if (!inTitle && !inIng && !inBron) return false;
     }
     return true;
   });
@@ -402,6 +421,7 @@ function renderWeekDay(dag) {
         <div style="flex:1;display:flex;flex-direction:column">
           <div class="week-titel" style="font-weight:600;font-size:13.5px;margin-bottom:8px;flex:1;cursor:pointer" data-action="open-view" data-id="${recipe.id}" title="Open recept">${escapeHtml(recipe.titel)}</div>
           <div class="pills mb-2">${renderPill('basis', recipe.basis)}${renderPill('proteine', recipe.proteine)}</div>
+          <div class="recipe-meta mono mb-2"><span>${icon('clock')}${recipe.bereidingstijd} min</span></div>
           <div class="flex items-center gap-2 mb-2">
             <span class="text-sm text-soft">${icon('users')}</span>
             <div class="stepper">
@@ -648,11 +668,24 @@ function renderRecipeFormFields(initialRecipe, opts) {
             <label class="field-label">Personen</label>
             <input class="input" type="number" min="1" name="personen" value="${r.personen || 4}">
           </div>
+        </div>
+      </div>
+      <div class="mb-3">
+        <div class="field-row">
           <div style="flex:1">
-            <label class="field-label">Bereidingstijd (min)</label>
+            <label class="field-label">Voorbereiding (min)</label>
+            <input class="input" type="number" min="0" name="voorbereidingstijd" value="${r.voorbereidingstijd != null ? r.voorbereidingstijd : ''}" placeholder="optioneel">
+          </div>
+          <div style="flex:1">
+            <label class="field-label">In de oven/pan (min)</label>
+            <input class="input" type="number" min="0" name="oventijd" value="${r.oventijd != null ? r.oventijd : ''}" placeholder="optioneel">
+          </div>
+          <div style="flex:1">
+            <label class="field-label">Totaal (min)</label>
             <input class="input" type="number" min="0" name="bereidingstijd" value="${r.bereidingstijd || 30}">
           </div>
         </div>
+        <p class="text-sm text-soft" style="margin:6px 0 0">Vul voorbereiding en/of oven/pan in: het totaal wordt dan automatisch opgeteld. Of vul alleen het totaal in.</p>
       </div>
       <div class="mb-4">
         <label class="field-label">Tags</label>
@@ -672,8 +705,8 @@ function renderRecipeFormFields(initialRecipe, opts) {
       </div>
       ${ingredientNamenDatalist()}
       <div class="mb-4">
-        <label class="field-label">Bron (optioneel)</label>
-        <input class="input" name="bron" value="${escapeHtml(r.bron || '')}" placeholder="https://...">
+        <label class="field-label">Bron (boek + bladzijde, of link) — optioneel</label>
+        <input class="input" name="bron" value="${escapeHtml(r.bron || '')}" placeholder="bv. Ottolenghi Simple, blz 45 — of https://...">
       </div>
       <div class="flex justify-between items-center" style="border-top:1px solid var(--line);padding-top:16px">
         <button type="button" class="btn btn-outline" data-action="close-modal">Annuleren</button>
@@ -712,13 +745,22 @@ async function handleRecipeFormSubmit(e) {
   const finalOnderdelen = onderdelen.length ? onderdelen : [{ naam: '', ingredienten: [], instructies: [] }];
   const tagIds = Array.from(form.querySelectorAll('[name="tagIds"]:checked')).map((cb) => cb.value);
 
+  const minOfNull = (v) => (v !== null && v !== '' && Number(v) > 0 ? Math.round(Number(v)) : null);
+  const voorTijd = minOfNull(fd.get('voorbereidingstijd'));
+  const ovenTijd = minOfNull(fd.get('oventijd'));
+  const totaalTijd = voorTijd != null || ovenTijd != null
+    ? (voorTijd || 0) + (ovenTijd || 0)
+    : Math.max(0, Number(fd.get('bereidingstijd')) || 0);
+
   const payload = {
     titel,
     basis: fd.get('basis'),
     proteine: fd.get('proteine'),
     keuken: fd.get('keuken'),
     personen: Math.max(1, Number(fd.get('personen')) || 1),
-    bereidingstijd: Math.max(0, Number(fd.get('bereidingstijd')) || 0),
+    bereidingstijd: totaalTijd,
+    voorbereidingstijd: voorTijd,
+    oventijd: ovenTijd,
     onderdelen: finalOnderdelen,
     tagIds,
     bron: (fd.get('bron') || '').toString().trim()
@@ -843,6 +885,30 @@ function instructiesListHtml(instructies) {
   return (instructies || []).map((s) => `<li style="margin-bottom:6px">${escapeHtml(s)}</li>`).join('');
 }
 
+// Tijd in de detailweergave: alleen het totaal, of — bij een opsplitsing — een
+// balk met voorbereiding en oven/pan naast elkaar.
+function renderTijdBlok(recipe) {
+  const voor = recipe.voorbereidingstijd > 0 ? recipe.voorbereidingstijd : 0;
+  const oven = recipe.oventijd > 0 ? recipe.oventijd : 0;
+  if (!voor && !oven) {
+    return `<div>
+      <div class="field-label">Bereidingstijd</div>
+      <div class="mono" style="font-weight:600;color:var(--plum)">${recipe.bereidingstijd} min</div>
+    </div>`;
+  }
+  return `<div style="flex:1;min-width:230px;max-width:420px">
+    <div class="field-label">Bereidingstijd</div>
+    <div class="mono" style="font-weight:600;color:var(--plum);margin-bottom:6px">${recipe.bereidingstijd} min totaal</div>
+    <div class="tijdbalk" role="img" aria-label="Voorbereiding ${voor} minuten, in de oven of pan ${oven} minuten">
+      ${voor ? `<div class="tijd-voor" style="flex:${voor}"></div>` : ''}${oven ? `<div class="tijd-oven" style="flex:${oven}"></div>` : ''}
+    </div>
+    <div class="tijd-legenda text-sm text-soft">
+      ${voor ? `<span><i class="tijd-dot tijd-voor"></i>Voorbereiding ${voor} min</span>` : ''}
+      ${oven ? `<span><i class="tijd-dot tijd-oven"></i>In de oven/pan ${oven} min</span>` : ''}
+    </div>
+  </div>`;
+}
+
 function renderViewModal(recipe) {
   if (!recipe) return '';
   const vp = state.viewPersonen || recipe.personen;
@@ -857,14 +923,18 @@ function renderViewModal(recipe) {
           <h2 class="display" style="font-size:22px;margin:0">${escapeHtml(recipe.titel)}</h2>
           <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
         </div>
+        ${(() => {
+          const b = bronInfo(recipe.bron);
+          if (!b) return '';
+          const inhoud = `${icon(b.url ? 'link' : 'book-open')}<span>${escapeHtml(b.tekst)}</span>`;
+          return b.url
+            ? `<a href="${escapeHtml(b.url)}" target="_blank" rel="noreferrer" class="recipe-bron-detail">${inhoud}</a>`
+            : `<div class="recipe-bron-detail">${inhoud}</div>`;
+        })()}
         <div class="pills mb-3">${renderPill('basis', recipe.basis)}${renderPill('proteine', recipe.proteine)}${renderPill('keuken', recipe.keuken)}</div>
         ${(recipe.tags || []).length ? `<div class="pills mb-3">${recipe.tags.map((t) => `<span class="tag-chip-sm">${escapeHtml(t.naam)}</span>`).join('')}</div>` : ''}
-        ${recipe.bron ? `<a href="${escapeHtml(recipe.bron)}" target="_blank" rel="noreferrer" class="text-sm" style="display:inline-block;margin-bottom:12px">Bron bekijken</a>` : ''}
         <div class="flex gap-4 mb-4 flex-wrap">
-          <div>
-            <div class="field-label">Bereidingstijd</div>
-            <div class="mono" style="font-weight:600;color:var(--plum)">${recipe.bereidingstijd} min</div>
-          </div>
+          ${renderTijdBlok(recipe)}
           <div>
             <div class="field-label">Personen</div>
             <div class="stepper">
@@ -1768,6 +1838,25 @@ function wireDynamicListeners() {
   });
 
   wireManageDrag();
+
+  // Totale tijd = voorbereiding + oven/pan zodra een van beide is ingevuld.
+  const receptForm = document.getElementById('recipe-form');
+  if (receptForm && receptForm.elements.voorbereidingstijd) {
+    const voorEl = receptForm.elements.voorbereidingstijd;
+    const ovenEl = receptForm.elements.oventijd;
+    const totaalEl = receptForm.elements.bereidingstijd;
+    const sync = () => {
+      if (voorEl.value !== '' || ovenEl.value !== '') {
+        totaalEl.value = (Number(voorEl.value) || 0) + (Number(ovenEl.value) || 0);
+        totaalEl.readOnly = true;
+      } else {
+        totaalEl.readOnly = false;
+      }
+    };
+    voorEl.addEventListener('input', sync);
+    ovenEl.addEventListener('input', sync);
+    sync();
+  }
 
   const basisZoek = document.getElementById('basis-zoek');
   if (basisZoek) basisZoek.addEventListener('input', () => {

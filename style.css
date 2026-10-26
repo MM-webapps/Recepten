@@ -305,3 +305,14 @@ textarea.input { resize: vertical; }
 .drag-handle { display: inline-flex; align-items: center; padding: 6px 4px; cursor: grab; color: var(--ink-soft); touch-action: none; user-select: none; -webkit-user-select: none; }
 .drag-handle:active { cursor: grabbing; }
 .manage-row.dragging { background: rgba(0, 0, 0, 0.05); box-shadow: 0 4px 14px rgba(30, 39, 31, 0.15); border-radius: 8px; }
+
+/* Bron en tijd (release 5) */
+.recipe-bron { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12.5px; color: var(--ink-soft); }
+.recipe-bron span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipe-bron-detail { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; font-size: 14px; color: var(--teal-dark); }
+.input[readonly] { background: var(--chip-bg); color: var(--ink-soft); }
+.tijdbalk { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background: var(--chip-bg); }
+.tijd-voor { background: var(--teal); }
+.tijd-oven { background: var(--brick); }
+.tijd-legenda { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
+.tijd-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }

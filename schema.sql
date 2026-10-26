@@ -217,6 +217,13 @@ alter table ingredients add column if not exists altijd_in_huis boolean not null
 -- Thuis (true) of Alles (false) op de boodschappenlijst.
 alter table instellingen add column if not exists boodschappen_thuis boolean not null default true;
 
+-- ───────────────────────────────────────────── Voorbereidings- en oventijd
+-- bereidingstijd blijft de TOTALE tijd (filter, weekmenu). Daarnaast kun je
+-- optioneel de tijd opsplitsen in actief werk en "in de oven/pan".
+-- Bestaande recepten houden alleen hun totaal (de nieuwe kolommen blijven leeg).
+alter table recipes add column if not exists voorbereidingstijd integer;
+alter table recipes add column if not exists oventijd integer;
+
 -- ───────────────────────────────────────────── Eenmalige migratie
 -- Zet bestaande recepten (met de oude platte kolommen recipes.ingredienten
 -- / recipes.instructies) om naar de nieuwe structuur hierboven. Draait

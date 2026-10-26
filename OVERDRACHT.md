@@ -1,6 +1,6 @@
 # MMenu-Planner — overdrachtsdocument
 
-Laatst bijgewerkt: 22 okt 2026 (release 4 afgerond).
+Laatst bijgewerkt: 22 okt 2026 (release 5 afgerond).
 
 ## 1. Wat doet de app
 Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
@@ -93,7 +93,12 @@ Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
 - Boodschappenlijst gegroepeerd per afdeling (volgorde = afdelingenvolgorde, daarna "Nog niet ingedeeld"), Thuis/Alles-schakelaar, "Deel lijst" (`shoppingListToText`, Web Share API met kopieer-fallback).
 - Afdeling-consistentie: bestaand ingrediënt houdt zijn afdeling; alleen NIEUWE ingrediënten (of ingrediënten zonder afdeling) krijgen er een: eerst `afdeling` uit de import-JSON (alleen bij exacte naam en niet "Overig"), anders trefwoordenregels, anders niets (`kiesAfdelingId` in db.js).
 
-**Release 5 — offline (gepland)**: service worker (app-bestanden cachen, versienummer), supabase-js en lucide in de repo zetten i.p.v. CDN, laatste data + vinkjes lokaal bewaren en synchroniseren, "Offline"-melding; alleen boodschappenlijst bruikbaar offline.
+**Release 5 — tijd en bron ✅ KLAAR (26 okt 2026)**
+- `recipes.voorbereidingstijd` en `recipes.oventijd` (nullable); `bereidingstijd` blijft het TOTAAL (filter + weekmenu). Totaal = som zodra een van beide is ingevuld (formulier, import en opslaan). Receptkaart: `55 min · 20 actief`; detail: tijdbalk met legenda; weekmenu: alleen totaal.
+- Bron: `bronInfo()` in app.js — http(s)-link blijft link (kaart toont domein), andere tekst (boek + blz) wordt met boekicoon getoond op kaart en detail; zoekbalk zoekt ook in bron.
+- JSON-import: optionele velden `voorbereidingstijd` en `oventijd`; `bereidingstijd` wordt de som als een van beide is gegeven.
+
+**Release 6 — offline (gepland)**: service worker (app-bestanden cachen, versienummer), supabase-js en lucide in de repo zetten i.p.v. CDN, laatste data + vinkjes lokaal bewaren en synchroniseren, "Offline"-melding; alleen boodschappenlijst bruikbaar offline.
 
 ## 9. Doorgaan in een nieuwe chat / Project
 Plak dit document + upload de bestanden (of plak alleen de bestanden die de release raakt: release 1 = index.html, app.js, README.md, ai-prompt.md; release 2 = utils.js, app.js; release 3 = db.js, schema.sql, app.js, style.css). Vraag per release: "Voer release N uit". Vergeet niet `config.js` op GitHub te laten staan.

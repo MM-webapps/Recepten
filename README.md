@@ -227,3 +227,22 @@ bestand plakken, Run): het voegt een `volgorde`-kolom toe aan `tags` en
 voegt de tabel `afdelingen` toe (met een startlijst) en de kolommen
 `ingredients.afdeling_id`, `ingredients.altijd_in_huis` en
 `instellingen.boodschappen_thuis`. Bestaande data blijft ongemoeid.
+
+## Voorbereidings- en oventijd, en de bron van een recept
+
+- **Tijd opsplitsen:** bij een recept kun je *Voorbereiding* (jouw handwerk)
+  en *In de oven/pan* invullen. Het **totaal** wordt dan automatisch
+  opgeteld. Vul je alleen het totaal in, dan werkt het zoals altijd. Het
+  filter "Max. tijd" en het weekmenu gebruiken alleen het totaal.
+- **Receptdetail:** bij een opgesplitste tijd zie je een balk met de twee
+  delen. Op de receptkaart staat bv. `55 min · 20 actief`.
+- **Bron:** vul hier een link in, of gewoon tekst zoals een boek en
+  bladzijde (bv. `Ottolenghi Simple, blz 45`). Tekst staat met een boekje
+  onder de titel van het recept en op de receptkaart; een link blijft
+  klikbaar. De zoekbalk zoekt ook in de bron, dus "Ottolenghi" vindt alle
+  recepten uit dat boek.
+
+**Voor deze update moet je `schema.sql` opnieuw draaien in Supabase**
+(twee nieuwe kolommen `voorbereidingstijd` en `oventijd` bij `recipes`;
+bestaande recepten blijven ongewijzigd).
+
