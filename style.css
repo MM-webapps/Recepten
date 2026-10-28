@@ -316,3 +316,8 @@ textarea.input { resize: vertical; }
 .tijd-oven { background: var(--brick); }
 .tijd-legenda { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
 .tijd-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+
+/* Knoppen in de donkere header (release 5.2): lichte tekst en rand */
+.header .btn-outline { color: #F1EDE1; border-color: rgba(241, 237, 225, 0.45); }
+.header .btn-outline:hover { color: #fff; border-color: #fff; background: rgba(255, 255, 255, 0.08); }
+

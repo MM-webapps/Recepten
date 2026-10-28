@@ -1,6 +1,6 @@
 # MMenu-Planner — overdrachtsdocument
 
-Laatst bijgewerkt: 22 okt 2026 (release 5 afgerond).
+Laatst bijgewerkt: 22 okt 2026 (release 5.2 afgerond).
 
 ## 1. Wat doet de app
 Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
@@ -97,6 +97,8 @@ Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
 - `recipes.voorbereidingstijd` en `recipes.oventijd` (nullable); `bereidingstijd` blijft het TOTAAL (filter + weekmenu). Totaal = som zodra een van beide is ingevuld (formulier, import en opslaan). Receptkaart: `55 min · 20 actief`; detail: tijdbalk met legenda; weekmenu: alleen totaal.
 - Bron: `bronInfo()` in app.js — http(s)-link blijft link (kaart toont domein), andere tekst (boek + blz) wordt met boekicoon getoond op kaart en detail; zoekbalk zoekt ook in bron.
 - JSON-import: optionele velden `voorbereidingstijd` en `oventijd`; `bereidingstijd` wordt de som als een van beide is gegeven.
+
+**Release 5.1/5.2 ✅ KLAAR (27 okt 2026)** — kleine fixes: ingrediëntenlijst ververst nu na een array-import en heeft een zoekveld (Beheren → Ingrediënten); Beheren-knop leesbaar in de donkere header (`.header .btn-outline` in style.css); receptkaart toont `55 min · 20 min voorbereiding`; bronvoorbeeld `boek, blz xx — of https://...`; uitlegzin onder het weekmenu verwijderd.
 
 **Release 6 — offline (gepland)**: service worker (app-bestanden cachen, versienummer), supabase-js en lucide in de repo zetten i.p.v. CDN, laatste data + vinkjes lokaal bewaren en synchroniseren, "Offline"-melding; alleen boodschappenlijst bruikbaar offline.
 

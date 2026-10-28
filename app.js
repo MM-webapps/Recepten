@@ -250,8 +250,8 @@ function bronInfo(bron) {
 }
 
 function tijdTekst(recipe) {
-  const actief = recipe.voorbereidingstijd > 0 && recipe.oventijd > 0 ? ` · ${recipe.voorbereidingstijd} actief` : '';
-  return `${recipe.bereidingstijd} min${actief}`;
+  const voorb = recipe.voorbereidingstijd > 0 && recipe.oventijd > 0 ? ` · ${recipe.voorbereidingstijd} min voorbereiding` : '';
+  return `${recipe.bereidingstijd} min${voorb}`;
 }
 
 function renderRecipeCard(recipe, matchInfo, action) {
@@ -404,7 +404,6 @@ function renderWeekmenu() {
           <button class="btn btn-primary" data-action="go-shopping">${icon('shopping-cart')} Boodschappenlijst</button>
         </div>
       </div>
-      <p class="text-sm text-soft mt-4" style="margin-bottom:0">Dit is het aantal personen dat wordt ingevuld zodra je een dag invult — je kunt het per dag aanpassen, bijvoorbeeld als er gasten zijn.</p>
     </div>
     <div class="week-grid">${DAGEN.map((d) => renderWeekDay(d)).join('')}</div>
   `;
@@ -706,7 +705,7 @@ function renderRecipeFormFields(initialRecipe, opts) {
       ${ingredientNamenDatalist()}
       <div class="mb-4">
         <label class="field-label">Bron (boek + bladzijde, of link) — optioneel</label>
-        <input class="input" name="bron" value="${escapeHtml(r.bron || '')}" placeholder="bv. Ottolenghi Simple, blz 45 — of https://...">
+        <input class="input" name="bron" value="${escapeHtml(r.bron || '')}" placeholder="boek, blz xx — of https://...">
       </div>
       <div class="flex justify-between items-center" style="border-top:1px solid var(--line);padding-top:16px">
         <button type="button" class="btn btn-outline" data-action="close-modal">Annuleren</button>
@@ -840,6 +839,7 @@ async function handleJsonFile(file) {
         saved.push(s);
       }
       state.recipes = [...saved, ...state.recipes];
+      state.ingredients = await db.fetchIngredients();
       state.modal = null;
       rerender();
       return;
@@ -1013,6 +1013,19 @@ function renderPickResults() {
 }
 
 // ─────────────────────────────────────────── Modal: Kenmerken, tags & ingrediënten beheren
+// Welke ingrediënten staan op het scherm: filter "Zonder afdeling" en zoekterm.
+function getoondeIngredienten(m) {
+  const zoek = normName(m.zoekIng || '');
+  return state.ingredients.filter((i) => (!m.zonderAfdeling || !i.afdeling_id) && (!zoek || normName(i.naam).includes(zoek)));
+}
+
+function ingredientenLijstHtml(m) {
+  const rijen = getoondeIngredienten(m);
+  if (rijen.length) return rijen.map((it) => renderIngredientRow(it, m)).join('');
+  if (m.zoekIng) return `<p class="text-sm text-soft">Geen ingrediënt gevonden voor "${escapeHtml(m.zoekIng)}".</p>`;
+  return `<p class="text-sm text-soft">${m.zonderAfdeling ? 'Alle ingrediënten hebben een afdeling.' : 'Nog niets toegevoegd.'}</p>`;
+}
+
 const MANAGE_PLACEHOLDER = { tags: 'tag', ingredienten: 'ingrediënt', eenheden: 'eenheid', afdelingen: 'afdeling' };
 
 function renderManageModal() {
@@ -1030,17 +1043,18 @@ function renderManageModal() {
   const isBasisTab = m.categorie === 'basisvoorraad';
   const isIng = m.categorie === 'ingredienten';
   const items = isBasisTab ? [] : manageItems(m.categorie);
-  const getoond = isIng && m.zonderAfdeling ? items.filter((i) => !i.afdeling_id) : items;
+  const getoond = items;
   const zonderCount = isIng ? items.filter((i) => !i.afdeling_id).length : 0;
   const body = isBasisTab ? renderBasisvoorraadBody() : `
         ${isIng ? `
+        <input id="manage-zoek-ing" class="input mb-3" placeholder="Zoek in alle ${items.length} ingrediënten..." value="${escapeHtml(m.zoekIng || '')}">
         <div class="flex gap-2 flex-wrap mb-3">
           <button class="btn btn-sm ${m.zonderAfdeling ? 'btn-primary' : 'btn-outline'}" data-action="manage-toggle-zonder">${icon('filter')} Zonder afdeling (${zonderCount})</button>
           <button class="btn btn-outline btn-sm" data-action="manage-auto-afdeling">${icon('wand-2')} Automatisch indelen</button>
           <button class="btn btn-outline btn-sm" data-action="manage-copy-namen">${icon('copy')} Kopieer namen</button>
         </div>` : ''}
         <div id="manage-list" class="mb-3" style="max-height:340px;overflow-y:auto">
-          ${getoond.length === 0 ? `<p class="text-sm text-soft">${isIng && m.zonderAfdeling ? 'Alle ingrediënten hebben een afdeling.' : 'Nog niets toegevoegd.'}</p>` : getoond.map((it) => (isIng ? renderIngredientRow(it, m) : renderManageRow(it, m))).join('')}
+          ${isIng ? ingredientenLijstHtml(m) : (getoond.length === 0 ? `<p class="text-sm text-soft">Nog niets toegevoegd.</p>` : getoond.map((it) => renderManageRow(it, m)).join(''))}
         </div>
         <div class="flex gap-2">
           <input id="manage-new-item" class="input" style="flex:1" placeholder="Nieuwe ${MANAGE_PLACEHOLDER[m.categorie] || 'optie'}...">
@@ -1168,7 +1182,7 @@ function renderIngredientRow(item, m) {
   }
   return `
     <div class="flex items-center gap-2 manage-row" data-id="${item.id}" style="padding:6px 0;border-bottom:1px solid var(--line)">
-      ${m.zonderAfdeling ? '' : DRAG_HANDLE_HTML()}
+      ${m.zonderAfdeling || m.zoekIng ? '' : DRAG_HANDLE_HTML()}
       <div style="flex:1;min-width:0">
         <div class="text-sm">${escapeHtml(item.naam)}</div>
         ${afdelingSelectHtml(item)}
@@ -1394,7 +1408,7 @@ async function handleAction(action, el) {
     }
 
     case 'manage-copy-namen': {
-      const lijst = state.modal.zonderAfdeling ? state.ingredients.filter((i) => !i.afdeling_id) : state.ingredients;
+      const lijst = getoondeIngredienten(state.modal);
       const ok = await copyText(lijst.map((i) => i.naam).join('\n'));
       flashButton(el, ok ? `${lijst.length} namen gekopieerd ✓` : 'Kopiëren mislukt');
       break;
@@ -1559,6 +1573,7 @@ async function handleAction(action, el) {
       state.modal.renameId = null;
       state.modal.mergeId = null;
       state.modal.zonderAfdeling = false;
+      state.modal.zoekIng = '';
       state.modal.zoek = '';
       state.modal.info = '';
       state.modal.error = '';
@@ -1857,6 +1872,13 @@ function wireDynamicListeners() {
     ovenEl.addEventListener('input', sync);
     sync();
   }
+
+  const ingZoek = document.getElementById('manage-zoek-ing');
+  if (ingZoek) ingZoek.addEventListener('input', () => {
+    state.modal.zoekIng = ingZoek.value;
+    const lijst = document.getElementById('manage-list');
+    if (lijst) { lijst.innerHTML = ingredientenLijstHtml(state.modal); hydrateIcons(); wireManageDrag(); }
+  });
 
   const basisZoek = document.getElementById('basis-zoek');
   if (basisZoek) basisZoek.addEventListener('input', () => {
