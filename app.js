@@ -100,6 +100,12 @@ function flashButton(el, tekst) {
 
 async function onContainerChange(e) {
   const t = e.target;
+  if (t && t.matches && t.matches('[data-share-optie]') && state.modal && state.modal.type === 'share') {
+    state.modal[t.dataset.shareOptie] = t.checked;
+    state.modal.error = '';
+    rerender();
+    return;
+  }
   if (!t || !t.matches || !t.matches('[data-afdeling-select]')) return;
   const id = t.dataset.id;
   const afdelingId = t.value || null;
@@ -194,6 +200,7 @@ function renderModalRoot() {
     else if (state.modal.type === 'pick') html += renderPickModal(state.modal.day);
     else if (state.modal.type === 'manage') html += renderManageModal();
     else if (state.modal.type === 'shop-item') html += renderShopItemModal(state.modal.key);
+    else if (state.modal.type === 'share') html += renderShareModal();
   }
   if (state.confirm) html += renderConfirmDialog(state.confirm.message);
   return html;
@@ -401,6 +408,7 @@ function renderWeekmenu() {
             </div>
           </div>
           <div class="flex gap-2 flex-wrap">
+            ${filled > 0 ? `<button class="btn btn-outline" style="white-space:nowrap" data-action="open-share">${icon('share-2')} Delen</button>` : ''}
             ${filled > 0 ? `<button class="btn btn-outline" style="white-space:nowrap" data-action="ask-clear-week">${icon('trash-2')} Weekmenu leegmaken</button>` : ''}
             <button class="btn btn-primary" style="white-space:nowrap" data-action="go-shopping">${icon('shopping-cart')} Boodschappenlijst</button>
           </div>
@@ -519,7 +527,7 @@ function renderBoodschappen() {
           <p class="text-sm text-soft" style="margin:0">${checkedCount} van ${v.visible.length} afgevinkt</p>
         </div>
         <div class="flex gap-2 flex-wrap">
-          <button class="btn btn-outline btn-sm" data-action="share-list">${icon('share-2')} Deel lijst</button>
+          <button class="btn btn-outline btn-sm" data-action="open-share">${icon('share-2')} Delen</button>
           <button class="btn btn-outline btn-sm" data-action="clear-checked">${icon('rotate-ccw')} Wis vinkjes</button>
         </div>
       </div>
@@ -548,6 +556,55 @@ function renderShopSection(title, items, checked, muted) {
           <span class="mono hoeveelheid">${item.hoeveelheid != null ? item.hoeveelheid : ''} ${escapeHtml(item.eenheid)}</span>
         </div>
       `).join('')}
+    </div>
+  `;
+}
+
+// ─────────────────────────────────────────── Delen (weekmenu en/of boodschappenlijst)
+function weekmenuTekst() {
+  const regels = ['Weekmenu'];
+  let gepland = 0;
+  DAGEN.forEach((d) => {
+    const entry = state.weekmenu[d];
+    const recipe = entry ? getRecipe(entry.recipeId) : null;
+    if (recipe) {
+      gepland++;
+      const personen = entry.personen || recipe.personen;
+      regels.push(`${DAG_NAMEN[d]}: ${recipe.titel} (${personen} pers., ${recipe.bereidingstijd} min)`);
+    } else {
+      regels.push(`${DAG_NAMEN[d]}: nog niets gepland`);
+    }
+  });
+  return gepland ? regels.join('\n') : '';
+}
+
+function boodschappenTekst() {
+  const v = getShoppingView();
+  const checked = state.instellingen.boodschappen_vinkjes || {};
+  const groepen = v.groepen
+    .map((g) => ({ titel: g.titel, items: g.items.filter((i) => !checked[i.key]) }))
+    .filter((g) => g.items.length);
+  return groepen.length ? shoppingListToText(groepen) : '';
+}
+
+function renderShareModal() {
+  const m = state.modal;
+  return `
+    <div class="modal-backdrop">
+      <div class="modal-card narrow">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="display" style="font-size:18px;margin:0">Delen</h2>
+          <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
+        </div>
+        <p class="text-sm text-soft mb-2">Wat wil je delen? Het gaat als één bericht, bijvoorbeeld naar WhatsApp.</p>
+        <label class="share-optie"><input type="checkbox" data-share-optie="weekmenu" ${m.weekmenu ? 'checked' : ''}> Weekmenu</label>
+        <label class="share-optie"><input type="checkbox" data-share-optie="boodschappen" ${m.boodschappen ? 'checked' : ''}> Boodschappenlijst</label>
+        ${m.error ? `<div class="mt-4">${bannerError(m.error)}</div>` : ''}
+        <div class="flex justify-end gap-2 mt-4">
+          <button class="btn btn-outline" data-action="close-modal">Annuleren</button>
+          <button class="btn btn-primary" data-action="share-confirm" ${m.weekmenu || m.boodschappen ? '' : 'disabled'}>${icon('share-2')} Delen</button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1368,20 +1425,28 @@ async function handleAction(action, el) {
       break;
     }
 
-    case 'share-list': {
-      const v = getShoppingView();
-      const checked = state.instellingen.boodschappen_vinkjes || {};
-      const groepen = v.groepen
-        .map((g) => ({ titel: g.titel, items: g.items.filter((i) => !checked[i.key]) }))
-        .filter((g) => g.items.length);
-      if (groepen.length === 0) { flashButton(el, 'Niets te delen'); break; }
-      const tekst = shoppingListToText(groepen);
+    case 'open-share':
+      state.modal = { type: 'share', weekmenu: true, boodschappen: true, error: '' };
+      rerender();
+      break;
+
+    case 'share-confirm': {
+      const delen = [];
+      if (state.modal.weekmenu) { const t = weekmenuTekst(); if (t) delen.push(t); }
+      if (state.modal.boodschappen) { const t = boodschappenTekst(); if (t) delen.push(t); }
+      if (delen.length === 0) {
+        state.modal.error = 'Er is niets om te delen: plan eerst een paar dagen in, of alles op de lijst is al afgevinkt.';
+        rerender();
+        break;
+      }
+      const tekst = delen.join('\n\n');
       if (navigator.share) {
-        try { await navigator.share({ title: 'Boodschappen', text: tekst }); break; }
+        try { await navigator.share({ title: 'MMenu-Planner', text: tekst }); closeModal(); break; }
         catch (err) { if (err && err.name === 'AbortError') break; }
       }
       const ok = await copyText(tekst);
       flashButton(el, ok ? 'Gekopieerd ✓' : 'Kopiëren mislukt');
+      if (ok) setTimeout(() => { if (state.modal && state.modal.type === 'share') closeModal(); }, 1200);
       break;
     }
 

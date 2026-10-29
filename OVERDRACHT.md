@@ -102,7 +102,9 @@ Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
 
 **Release 5.3 ✅ KLAAR (28 okt 2026)** — mobiel: de weekmenu-kaartrij (stappenteller + "Weekmenu leegmaken" + "Boodschappenlijst") mag nu naar een nieuwe regel (wrap, geen horizontale scroll meer op telefoonbreedte); header-top kreeg weer zijn zijmarge van 20 px (logo/knoppen stonden tegen de rand).
 
-**Release 6 — offline (gepland)**: service worker (app-bestanden cachen, versienummer), supabase-js en lucide in de repo zetten i.p.v. CDN, laatste data + vinkjes lokaal bewaren en synchroniseren, "Offline"-melding; alleen boodschappenlijst bruikbaar offline.
+**Release 6 ✅ KLAAR (29 okt 2026)** — webapp + Delen-popup. `manifest.webmanifest`, iconen (`icon-192.png`, `icon-512.png`, `apple-touch-icon.png`), standalone-meta's en safe-area-padding in `index.html`/`style.css`: via Safari "Zet op beginscherm" opent de site schermvullend (geen offline/service worker). Eén **Delen**-knop (weekmenu- en boodschappen-tab) opent een popup met vinkjes Weekmenu + Boodschappenlijst (standaard beide); één gecombineerd bericht via Web Share, anders klembord. Geen schema-wijziging.
+
+**Releaseplan**: 7 Gekookt + Favorieten (schema) · 8 Prompt-knop + sneller opslaan (schema) · 9 Verras me · 10 Kookmodus. Offline blijft op de plank tot hij slecht bereik ervaart.
 
 ## 9. Doorgaan in een nieuwe chat / Project
 Plak dit document + upload de bestanden (of plak alleen de bestanden die de release raakt: release 1 = index.html, app.js, README.md, ai-prompt.md; release 2 = utils.js, app.js; release 3 = db.js, schema.sql, app.js, style.css). Vraag per release: "Voer release N uit". Vergeet niet `config.js` op GitHub te laten staan.

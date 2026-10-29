@@ -246,3 +246,7 @@ voegt de tabel `afdelingen` toe (met een startlijst) en de kolommen
 (twee nieuwe kolommen `voorbereidingstijd` en `oventijd` bij `recipes`;
 bestaande recepten blijven ongewijzigd).
 
+
+
+## Als app op je iPhone (release 6)
+Open de site in Safari → Deel-knop → **Zet op beginscherm** → Voeg toe. De app opent daarna schermvullend zonder adresbalk. (Werkt niet offline.)

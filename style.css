@@ -46,6 +46,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   position: sticky;
   top: 0;
   z-index: 30;
+  padding-top: env(safe-area-inset-top);   /* schermvullend: onder de statusbalk */
 }
 .header-top {
   display: flex;
@@ -77,7 +78,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .nav-tab:hover { color: #fff; }
 .nav-tab.active { color: #fff; border-bottom-color: var(--teal); }
 
-main { padding: 24px 0 80px; }
+main { padding: 24px 0 calc(80px + env(safe-area-inset-bottom)); }
 
 .card {
   background: var(--card);
@@ -320,4 +321,8 @@ textarea.input { resize: vertical; }
 /* Knoppen in de donkere header (release 5.2): lichte tekst en rand */
 .header .btn-outline { color: #F1EDE1; border-color: rgba(241, 237, 225, 0.45); }
 .header .btn-outline:hover { color: #fff; border-color: #fff; background: rgba(255, 255, 255, 0.08); }
+
+/* Delen-popup (release 6) */
+.share-optie { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 15px; }
+.share-optie input { width: 20px; height: 20px; accent-color: var(--teal); }
 
