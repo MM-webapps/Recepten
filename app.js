@@ -391,17 +391,19 @@ function renderWeekmenu() {
           <h2 class="display" style="font-size:18px;margin:0 0 2px">Weekmenu</h2>
           <p class="text-sm text-soft" style="margin:0">${filled} van de 7 dagen gepland</p>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 flex-wrap" style="max-width:100%">
           <div class="flex items-center gap-2">
-            <span class="text-sm">Standaard personen</span>
+            <span class="text-sm" style="white-space:nowrap">Standaard personen</span>
             <div class="stepper">
               <button data-action="huishoud-min">${icon('minus')}</button>
               <span class="mono">${state.instellingen.huishoud_personen}</span>
               <button data-action="huishoud-plus">${icon('plus')}</button>
             </div>
           </div>
-          ${filled > 0 ? `<button class="btn btn-outline" data-action="ask-clear-week">${icon('trash-2')} Weekmenu leegmaken</button>` : ''}
-          <button class="btn btn-primary" data-action="go-shopping">${icon('shopping-cart')} Boodschappenlijst</button>
+          <div class="flex gap-2 flex-wrap">
+            ${filled > 0 ? `<button class="btn btn-outline" style="white-space:nowrap" data-action="ask-clear-week">${icon('trash-2')} Weekmenu leegmaken</button>` : ''}
+            <button class="btn btn-primary" style="white-space:nowrap" data-action="go-shopping">${icon('shopping-cart')} Boodschappenlijst</button>
+          </div>
         </div>
       </div>
     </div>
