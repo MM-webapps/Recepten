@@ -15,7 +15,8 @@ const state = {
   afdelingen: [],
   eenheden: [],
   activeTab: 'recepten',
-  filters: { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' },
+  filters: newFilters(),
+  gekookt: [],
   pickerSortFridge: false,
   viewPersonen: null,
   planDay: null,
@@ -28,6 +29,10 @@ const state = {
 function basisNamen() { return state.kenmerkOpties.basis.map((o) => o.naam); }
 function proteineNamen() { return state.kenmerkOpties.proteine.map((o) => o.naam); }
 function keukenNamen() { return state.kenmerkOpties.keuken.map((o) => o.naam); }
+
+function newFilters() {
+  return { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '', favoriet: false, sort: '' };
+}
 
 const root = document.getElementById('app');
 const modalRoot = document.getElementById('modal-root');
@@ -48,9 +53,9 @@ async function init() {
   root.innerHTML = renderLoading();
   hydrateIcons();
   try {
-    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients, eenheden, afdelingen] = await Promise.all([
+    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients, eenheden, afdelingen, gekookt] = await Promise.all([
       db.fetchRecipes(), db.fetchWeekmenu(), db.fetchKoelkast(), db.fetchInstellingen(),
-      db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients(), db.fetchEenheden(), db.fetchAfdelingen()
+      db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients(), db.fetchEenheden(), db.fetchAfdelingen(), db.fetchGekookt()
     ]);
     state.recipes = recipes;
     state.weekmenu = weekmenu;
@@ -65,6 +70,7 @@ async function init() {
     state.ingredients = ingredients;
     state.eenheden = eenheden;
     state.afdelingen = afdelingen;
+    state.gekookt = gekookt;
     state.loaded = true;
     rerender();
   } catch (e) {
@@ -261,11 +267,56 @@ function tijdTekst(recipe) {
   return `${recipe.bereidingstijd} min${voorb}`;
 }
 
+// ─────────────────────────────────────────── Gekookt-statistiek
+function localISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function kookStats(recipeId) {
+  const rijen = state.gekookt.filter((g) => g.recipe_id === recipeId);
+  if (!rijen.length) return { laatst: '', aantal: 0 };
+  return { laatst: rijen.map((g) => g.datum).sort().pop(), aantal: rijen.length };
+}
+
+function relatieveTijd(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const nu = new Date();
+  const dagen = Math.round((new Date(nu.getFullYear(), nu.getMonth(), nu.getDate()) - new Date(y, m - 1, d)) / 86400000);
+  if (dagen <= 0) return 'vandaag';
+  if (dagen === 1) return 'gisteren';
+  if (dagen < 14) return `${dagen} dagen geleden`;
+  if (dagen < 60) return `${Math.floor(dagen / 7)} weken geleden`;
+  if (dagen < 365) return `${Math.floor(dagen / 30)} maanden geleden`;
+  return 'meer dan een jaar geleden';
+}
+
+function laatstGekooktTekst(recipeId) {
+  const s = kookStats(recipeId);
+  return s.aantal ? `Laatst gekookt: ${relatieveTijd(s.laatst)} · ${s.aantal}×` : '';
+}
+
+// Datum van een weekmenu-dag in de huidige week (ma t/m zo), nooit in de toekomst.
+function dagDatum(dag) {
+  const nu = new Date();
+  const maandag = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate() - ((nu.getDay() + 6) % 7));
+  const doel = new Date(maandag.getFullYear(), maandag.getMonth(), maandag.getDate() + DAGEN.indexOf(dag));
+  return localISO(doel > nu ? nu : doel);
+}
+
+function sortRecipes(list, sort) {
+  if (sort !== 'lang') return list;
+  return list.slice().sort((x, y) => {
+    const lx = kookStats(x.id).laatst, ly = kookStats(y.id).laatst;
+    if (lx !== ly) return lx < ly ? -1 : 1; // nooit gekookt ('') eerst, dan het langst geleden
+    return new Date(x.aangemaakt) - new Date(y.aangemaakt);
+  });
+}
+
 function renderRecipeCard(recipe, matchInfo, action) {
   const tags = recipe.tags || [];
   return `
     <div class="card recipe-card" data-action="${action || 'open-view'}" data-id="${recipe.id}">
-      <h3 class="display">${escapeHtml(recipe.titel)}</h3>
+      <h3 class="display">${recipe.favoriet ? `<span class="fav-hart">♥</span> ` : ''}${escapeHtml(recipe.titel)}</h3>
       <div class="pills">
         ${renderPill('basis', recipe.basis)}${renderPill('proteine', recipe.proteine)}${renderPill('keuken', recipe.keuken)}
       </div>
@@ -274,6 +325,7 @@ function renderRecipeCard(recipe, matchInfo, action) {
         <span>${icon('clock')}${tijdTekst(recipe)}</span>
         <span>${icon('users')}${recipe.personen}p</span>
       </div>
+      ${laatstGekooktTekst(recipe.id) ? `<div class="recipe-bron">${icon('chef-hat')}<span>${laatstGekooktTekst(recipe.id)}</span></div>` : ''}
       ${(() => { const b = bronInfo(recipe.bron); return b ? `<div class="recipe-bron">${icon(b.url ? 'link' : 'book-open')}<span>${escapeHtml(b.tekst)}</span></div>` : ''; })()}
       ${matchInfo ? `
         <div class="mt-4">
@@ -305,7 +357,7 @@ function optionListHtml(options, value) {
 
 function renderFilterBarInner(showSortFridge) {
   const f = state.filters;
-  const active = f.basis || f.proteine || f.keuken || f.tag || f.maxTijd || f.zoek;
+  const active = f.basis || f.proteine || f.keuken || f.tag || f.maxTijd || f.zoek || f.favoriet || f.sort;
   return `
     <div class="card flex flex-wrap items-end gap-3" style="padding:14px">
       <div style="flex:1;min-width:160px">
@@ -317,6 +369,8 @@ function renderFilterBarInner(showSortFridge) {
       <div><label class="field-label">Keuken</label><select class="input" name="f-keuken">${optionListHtml(keukenNamen(), f.keuken)}</select></div>
       <div><label class="field-label">Tag</label><select class="input" name="f-tag">${optionListHtml(state.tags.map((t) => t.naam), f.tag)}</select></div>
       <div style="width:110px"><label class="field-label">Max. tijd</label><input class="input" type="number" min="0" name="f-maxtijd" placeholder="min" value="${escapeHtml(f.maxTijd)}"></div>
+      <div><label class="field-label">Sorteren</label><select class="input" name="f-sort"><option value="">Nieuwste eerst</option><option value="lang" ${f.sort === 'lang' ? 'selected' : ''}>Lang niet gemaakt</option></select></div>
+      <label class="flex items-center gap-2 text-sm" style="padding-bottom:9px"><input type="checkbox" name="f-fav" ${f.favoriet ? 'checked' : ''}> Alleen favorieten</label>
       ${showSortFridge ? `<label class="flex items-center gap-2 text-sm" style="padding-bottom:9px"><input type="checkbox" name="f-sortfridge" ${state.pickerSortFridge ? 'checked' : ''}> Sorteer op koelkastmatch</label>` : ''}
       ${active ? `<button type="button" class="btn btn-outline btn-sm" data-action="clear-filters">${icon('x')} Wis filters</button>` : ''}
     </div>
@@ -330,6 +384,7 @@ function filterRecipes(recipes, filters) {
     if (filters.keuken && r.keuken !== filters.keuken) return false;
     if (filters.tag && !(r.tags || []).some((t) => t.naam === filters.tag)) return false;
     if (filters.maxTijd && r.bereidingstijd > Number(filters.maxTijd)) return false;
+    if (filters.favoriet && !r.favoriet) return false;
     if (filters.zoek) {
       const q = filters.zoek.toLowerCase();
       const inTitle = r.titel.toLowerCase().includes(q);
@@ -362,6 +417,10 @@ function wireFilterBar(barId, resultsId, renderResultsFn) {
   const tag = bar.querySelector('[name="f-tag"]');
   const maxTijd = bar.querySelector('[name="f-maxtijd"]');
   const sortFridge = bar.querySelector('[name="f-sortfridge"]');
+  const sortSel = bar.querySelector('[name="f-sort"]');
+  const favBox = bar.querySelector('[name="f-fav"]');
+  if (sortSel) sortSel.addEventListener('change', () => { state.filters.sort = sortSel.value; rebuildBar(hasSortFridge); });
+  if (favBox) favBox.addEventListener('change', () => { state.filters.favoriet = favBox.checked; rebuildBar(hasSortFridge); });
   if (zoek) zoek.addEventListener('input', () => { state.filters.zoek = zoek.value; refresh(); });
   if (maxTijd) maxTijd.addEventListener('input', () => { state.filters.maxTijd = maxTijd.value; refresh(); });
   if (basis) basis.addEventListener('change', () => { state.filters.basis = basis.value; rebuildBar(hasSortFridge); });
@@ -383,7 +442,7 @@ function renderReceptenResults() {
   if (state.recipes.length === 0) {
     return renderEmptyState('chef-hat', 'Nog geen recepten bewaard. Voeg je eerste recept toe.', { label: 'Nieuw recept', action: 'open-add' });
   }
-  const filtered = filterRecipes(state.recipes, state.filters);
+  const filtered = sortRecipes(filterRecipes(state.recipes, state.filters), state.filters.sort);
   if (filtered.length === 0) return renderEmptyState('search', 'Geen recepten gevonden met deze filters.');
   return `<div class="grid grid-3">${filtered.map((r) => renderRecipeCard(r)).join('')}</div>`;
 }
@@ -419,6 +478,11 @@ function renderWeekmenu() {
   `;
 }
 
+function dagGekookt(dag, recipe) {
+  const datum = dagDatum(dag);
+  return state.gekookt.find((g) => g.recipe_id === recipe.id && g.datum === datum) || null;
+}
+
 function renderWeekDay(dag) {
   const entry = state.weekmenu[dag];
   const recipe = entry ? getRecipe(entry.recipeId) : null;
@@ -439,6 +503,7 @@ function renderWeekDay(dag) {
               <button data-action="day-personen-plus" data-day="${dag}">${icon('plus')}</button>
             </div>
           </div>
+          <button class="btn ${dagGekookt(dag, recipe) ? 'btn-primary' : 'btn-outline'} btn-sm btn-block mb-2" data-action="toggle-gekookt-dag" data-day="${dag}">${icon('check')} Gekookt</button>
           <div class="flex gap-2">
             <button class="btn btn-outline btn-sm" style="flex:1" data-action="open-pick" data-day="${dag}">Wijzig</button>
             <button class="btn btn-outline btn-sm btn-icon" data-action="remove-day" data-day="${dag}">${icon('x')}</button>
@@ -917,7 +982,25 @@ async function handleJsonFile(file) {
 
 // ─────────────────────────────────────────── Modal: Receptdetail
 function todayISODate() {
-  return new Date().toISOString().slice(0, 10);
+  return localISO(new Date());
+}
+
+function renderGekooktBlok(recipe) {
+  const rijen = state.gekookt.filter((g) => g.recipe_id === recipe.id).sort((x, y) => y.datum.localeCompare(x.datum));
+  return `
+    <div class="mb-3" style="padding:10px;border-radius:8px;background:#F6F2E7">
+      <div class="text-sm mb-2">${rijen.length ? laatstGekooktTekst(recipe.id) : 'Nog niet gekookt'}</div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button class="btn btn-primary btn-sm" data-action="gekookt-vandaag" data-id="${recipe.id}">${icon('check')} Gekookt vandaag</button>
+        <input id="gekookt-datum" class="input" type="date" style="width:150px" value="${todayISODate()}">
+        <button class="btn btn-outline btn-sm" data-action="gekookt-datum" data-id="${recipe.id}">Andere datum</button>
+      </div>
+      ${rijen.length ? `<div class="mt-3">${rijen.slice(0, 5).map((g) => `
+        <div class="flex items-center justify-between text-sm" style="padding:2px 0">
+          <span class="mono text-soft">${formatDatumNL(g.datum)}</span>
+          <button class="btn btn-outline btn-sm btn-icon" data-action="delete-gekookt" data-id="${g.id}" title="Verwijder deze keer">${icon('x')}</button>
+        </div>`).join('')}${rijen.length > 5 ? `<div class="text-sm text-soft">en nog ${rijen.length - 5} eerdere keren</div>` : ''}</div>` : ''}
+    </div>`;
 }
 
 function renderNotitiesLijst() {
@@ -980,7 +1063,10 @@ function renderViewModal(recipe) {
       <div class="modal-card">
         <div class="flex justify-between items-start gap-3 mb-2">
           <h2 class="display" style="font-size:22px;margin:0">${escapeHtml(recipe.titel)}</h2>
-          <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
+          <div class="flex gap-2">
+            <button class="btn btn-outline btn-icon ${recipe.favoriet ? 'fav-aan' : ''}" data-action="toggle-favoriet" data-id="${recipe.id}" title="Favoriet" aria-label="Favoriet">${recipe.favoriet ? '♥' : '♡'}</button>
+            <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
+          </div>
         </div>
         ${(() => {
           const b = bronInfo(recipe.bron);
@@ -1003,6 +1089,7 @@ function renderViewModal(recipe) {
             </div>
           </div>
         </div>
+        ${renderGekooktBlok(recipe)}
         <div class="mb-3" style="padding:10px;border-radius:8px;background:#F6F2E7">
           <div class="text-sm mb-1">${match.matched}/${match.total} ingrediënten in je koelkast</div>
           <div class="progress-track"><div class="progress-fill" style="width:${match.pct}%"></div></div>
@@ -1062,7 +1149,7 @@ function renderPickModal(day) {
 }
 
 function renderPickResults() {
-  let list = filterRecipes(state.recipes, state.filters);
+  let list = sortRecipes(filterRecipes(state.recipes, state.filters), state.filters.sort);
   const fridgeNames = state.fridge.map((f) => f.naam);
   if (state.pickerSortFridge) {
     list = list.map((r) => ({ r, m: fridgeMatchForRecipe(r, fridgeNames) })).sort((a, b) => b.m.pct - a.m.pct).map((x) => x.r);
@@ -1289,7 +1376,7 @@ async function handleAction(action, el) {
   switch (action) {
     case 'tab':
       state.activeTab = el.dataset.tab;
-      state.filters = { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' };
+      state.filters = newFilters();
       rerender();
       break;
 
@@ -1327,6 +1414,48 @@ async function handleAction(action, el) {
       if (!tekst) break;
       const row = await db.addNotitie(el.dataset.id, tekst, datum);
       state.viewNotities = [row, ...state.viewNotities].sort((a, b) => (b.datum + b.aangemaakt).localeCompare(a.datum + a.aangemaakt));
+      rerender();
+      break;
+    }
+
+    case 'toggle-favoriet': {
+      const recipe = getRecipe(el.dataset.id);
+      if (!recipe) break;
+      const aan = !recipe.favoriet;
+      await db.setFavoriet(recipe.id, aan);
+      state.recipes = state.recipes.map((r) => (r.id === recipe.id ? { ...r, favoriet: aan } : r));
+      rerender();
+      break;
+    }
+
+    case 'gekookt-vandaag':
+    case 'gekookt-datum': {
+      const datum = action === 'gekookt-datum' ? document.getElementById('gekookt-datum').value : todayISODate();
+      if (!datum) break;
+      const row = await db.addGekookt(el.dataset.id, datum);
+      state.gekookt = [row, ...state.gekookt];
+      rerender();
+      break;
+    }
+
+    case 'delete-gekookt':
+      await db.deleteGekookt(el.dataset.id);
+      state.gekookt = state.gekookt.filter((g) => g.id !== el.dataset.id);
+      rerender();
+      break;
+
+    case 'toggle-gekookt-dag': {
+      const entry = state.weekmenu[el.dataset.day];
+      const recipe = entry ? getRecipe(entry.recipeId) : null;
+      if (!recipe) break;
+      const bestaand = dagGekookt(el.dataset.day, recipe);
+      if (bestaand) {
+        await db.deleteGekookt(bestaand.id);
+        state.gekookt = state.gekookt.filter((g) => g.id !== bestaand.id);
+      } else {
+        const row = await db.addGekookt(recipe.id, dagDatum(el.dataset.day));
+        state.gekookt = [row, ...state.gekookt];
+      }
       rerender();
       break;
     }
@@ -1599,7 +1728,7 @@ async function handleAction(action, el) {
       break;
 
     case 'clear-filters':
-      state.filters = { basis: '', proteine: '', keuken: '', tag: '', maxTijd: '', zoek: '' };
+      state.filters = newFilters();
       rerender();
       break;
 

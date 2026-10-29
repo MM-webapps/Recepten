@@ -293,6 +293,18 @@ begin
   end if;
 end $$;
 
+-- ───────────────────────────────────────────── Release 7: Favorieten + Gekookt
+alter table recipes add column if not exists favoriet boolean not null default false;
+
+-- Elke keer dat je een recept kookt = 1 rij (recept + datum).
+create table if not exists gekookt (
+  id          uuid primary key default gen_random_uuid(),
+  recipe_id   uuid not null references recipes(id) on delete cascade,
+  datum       date not null default current_date,
+  aangemaakt  timestamptz not null default now()
+);
+create index if not exists gekookt_recipe_idx on gekookt(recipe_id);
+
 -- ───────────────────────────────────────────── Row Level Security
 -- Geen login gekozen → open policies, zodat de site met alleen de
 -- anon-key kan lezen/schrijven. Zie README.md voor het beveiligingsaspect.
@@ -311,6 +323,7 @@ alter table recipe_onderdelen enable row level security;
 alter table recipe_ingredienten enable row level security;
 alter table eenheden enable row level security;
 alter table afdelingen enable row level security;
+alter table gekookt enable row level security;
 
 drop policy if exists "recipes_open" on recipes;
 create policy "recipes_open" on recipes for all using (true) with check (true);
@@ -353,3 +366,6 @@ create policy "eenheden_open" on eenheden for all using (true) with check (true)
 
 drop policy if exists "afdelingen_open" on afdelingen;
 create policy "afdelingen_open" on afdelingen for all using (true) with check (true);
+
+drop policy if exists "gekookt_open" on gekookt;
+create policy "gekookt_open" on gekookt for all using (true) with check (true);

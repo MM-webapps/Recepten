@@ -326,3 +326,7 @@ textarea.input { resize: vertical; }
 .share-optie { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 15px; }
 .share-optie input { width: 20px; height: 20px; accent-color: var(--teal); }
 
+/* Favorieten (release 7) */
+.fav-hart { color: #B5483A; }
+.btn.fav-aan { color: #B5483A; border-color: #B5483A; }
+

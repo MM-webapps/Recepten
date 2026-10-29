@@ -25,7 +25,8 @@ function uuid() {
 }
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
 }
 
 // Volgende volgorde-waarde (achteraan) voor een tabel, optioneel binnen een
@@ -223,6 +224,7 @@ let demoTags = [
   { id: uuid(), naam: 'Snel klaar', volgorde: 2 }
 ];
 let demoRecipeTagIds = {}; // { [recipeId]: [tagId, ...] }
+let demoGekookt = []; // [{id, recipe_id, datum, aangemaakt}]
 let demoNotities = {}; // { [recipeId]: [{id, tekst, datum, aangemaakt}, ...] }
 
 function demoTagsFor(recipeId) {
@@ -779,5 +781,41 @@ export async function deleteNotitie(id, recipeId) {
     return;
   }
   const { error } = await supabase.from('notities').delete().eq('id', id);
+  check(error);
+}
+
+// ─────────────────────────────── Favorieten en Gekookt
+export async function setFavoriet(recipeId, aan) {
+  if (DEMO_MODE) {
+    demoRecipes = demoRecipes.map((r) => (r.id === recipeId ? { ...r, favoriet: aan } : r));
+    return;
+  }
+  const { error } = await supabase.from('recipes').update({ favoriet: aan }).eq('id', recipeId);
+  check(error);
+}
+
+export async function fetchGekookt() {
+  if (DEMO_MODE) return demoGekookt.slice();
+  const { data, error } = await supabase.from('gekookt').select('*').order('datum', { ascending: false });
+  check(error);
+  return data;
+}
+
+export async function addGekookt(recipeId, datum) {
+  if (DEMO_MODE) {
+    const row = { id: uuid(), recipe_id: recipeId, datum: datum || todayISO(), aangemaakt: new Date().toISOString() };
+    demoGekookt = [row, ...demoGekookt];
+    return row;
+  }
+  const payload = { recipe_id: recipeId };
+  if (datum) payload.datum = datum;
+  const { data, error } = await supabase.from('gekookt').insert(payload).select().single();
+  check(error);
+  return data;
+}
+
+export async function deleteGekookt(id) {
+  if (DEMO_MODE) { demoGekookt = demoGekookt.filter((g) => g.id !== id); return; }
+  const { error } = await supabase.from('gekookt').delete().eq('id', id);
   check(error);
 }

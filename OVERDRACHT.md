@@ -104,7 +104,9 @@ Persoonlijke recepten- en weekmenu-app (geen login, één gebruiker/huishouden).
 
 **Release 6 ✅ KLAAR (29 okt 2026)** — webapp + Delen-popup. `manifest.webmanifest`, iconen (`icon-192.png`, `icon-512.png`, `apple-touch-icon.png`), standalone-meta's en safe-area-padding in `index.html`/`style.css`: via Safari "Zet op beginscherm" opent de site schermvullend (geen offline/service worker). Eén **Delen**-knop (weekmenu- en boodschappen-tab) opent een popup met vinkjes Weekmenu + Boodschappenlijst (standaard beide); één gecombineerd bericht via Web Share, anders klembord. Geen schema-wijziging.
 
-**Releaseplan**: 7 Gekookt + Favorieten (schema) · 8 Prompt-knop + sneller opslaan (schema) · 9 Verras me · 10 Kookmodus. Offline blijft op de plank tot hij slecht bereik ervaart.
+**Release 7 ✅ KLAAR (29 okt 2026)** — Gekookt + Favorieten. Schema: `recipes.favoriet` + tabel `gekookt` (recipe_id, datum; schema.sql opnieuw draaien). Hartje in receptdetail (♥ ook op kaart/lijst), filter "Alleen favorieten", sortering "Lang niet gemaakt" (nooit gekookt eerst) in receptenlijst en dagkiezer. Detail: "Gekookt vandaag" + "Andere datum", laatste 5 keren met verwijderknop; kaart toont "Laatst gekookt: x geleden · n×". Weekmenu: knop "Gekookt" per dag (logt de datum van die dag in de huidige week, nooit in de toekomst; nogmaals tikken haalt het weg). Datums nu lokaal (niet UTC).
+
+**Releaseplan** (rest): 8 Prompt-knop + sneller opslaan (schema) · 9 Verras me · 10 Kookmodus. Offline blijft op de plank tot hij slecht bereik ervaart.
 
 ## 9. Doorgaan in een nieuwe chat / Project
 Plak dit document + upload de bestanden (of plak alleen de bestanden die de release raakt: release 1 = index.html, app.js, README.md, ai-prompt.md; release 2 = utils.js, app.js; release 3 = db.js, schema.sql, app.js, style.css). Vraag per release: "Voer release N uit". Vergeet niet `config.js` op GitHub te laten staan.
