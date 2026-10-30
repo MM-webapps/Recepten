@@ -209,7 +209,7 @@ let demoRecipes = demoSeedRecipes.map((r, idx) => ({
 
 let demoWeekmenu = { Ma: null, Di: null, Wo: null, Do: null, Vr: null, Za: null, Zo: null };
 let demoKoelkast = [];
-let demoInstellingen = { id: 1, huishoud_personen: 2, boodschappen_vinkjes: {}, boodschappen_thuis: true };
+let demoInstellingen = { id: 1, huishoud_personen: 2, boodschappen_vinkjes: {}, boodschappen_thuis: true, prompt_extra: '' };
 
 let demoKenmerkOpties = [
   ...DEFAULT_BASIS_OPTIONS.map((naam, i) => ({ id: uuid(), categorie: 'basis', naam, volgorde: i + 1 })),
@@ -270,65 +270,107 @@ export async function fetchRecipes() {
   return data.map(transformRecipeRow);
 }
 
-// Zoekt (of maakt) het canonieke ingrediënt bij een getypte naam: eerst een
-// exacte match op de naam zelf, dan op een bijnaam, anders wordt een nieuw
-// canoniek ingrediënt aangemaakt.
-async function resolveIngredientId(naam, afdelingen, voorstel) {
-  const clean = naam.trim();
-  const { data: direct, error: dErr } = await supabase.from('ingredients').select('id, afdeling_id').ilike('naam', clean).limit(1);
-  check(dErr);
-  if (direct && direct.length) {
-    // Bestaand ingrediënt: de afdeling blijft zoals die is. Alleen als er nog
-    // géén afdeling is, vullen we er een in.
-    if (!direct[0].afdeling_id) {
-      const afdelingId = kiesAfdelingId(clean, voorstel, afdelingen);
-      if (afdelingId) {
-        const { error: uErr } = await supabase.from('ingredients').update({ afdeling_id: afdelingId }).eq('id', direct[0].id);
-        check(uErr);
-      }
-    }
-    return direct[0].id;
+// Sleutel waarmee we ingrediënten vergelijken: hetzelfde als de unieke index in
+// de database (kleine letters, zonder spaties aan de randen).
+const dbKey = (s) => (s || '').trim().toLowerCase();
+
+async function fetchAlles(tabel, kolommen) {
+  const rijen = [];
+  for (let van = 0; ; van += 1000) {
+    const { data, error } = await supabase.from(tabel).select(kolommen).range(van, van + 999);
+    check(error);
+    rijen.push(...data);
+    if (data.length < 1000) break;
   }
-  const { data: aliasRows, error: aErr } = await supabase.from('ingredient_aliassen').select('ingredient_id').ilike('alias', clean).limit(1);
-  check(aErr);
-  if (aliasRows && aliasRows.length) return aliasRows[0].ingredient_id;
-  const volgorde = await nextVolgorde('ingredients');
-  const { data: created, error: cErr } = await supabase.from('ingredients')
-    .insert({ naam: clean, volgorde, afdeling_id: kiesAfdelingId(clean, voorstel, afdelingen) }).select().single();
-  check(cErr);
-  return created.id;
+  return rijen;
+}
+
+// Laadt ingrediënten, bijnamen en afdelingen één keer in het geheugen, zodat
+// het opslaan van een recept (of tien recepten) niet per ingrediënt de
+// database hoeft te bevragen. In demo-modus is dit niet nodig (null).
+export async function createImportContext() {
+  if (DEMO_MODE) return null;
+  const [ingredienten, aliassen, afdelingen] = await Promise.all([
+    fetchAlles('ingredients', 'id, naam, afdeling_id, volgorde'),
+    fetchAlles('ingredient_aliassen', 'alias, ingredient_id'),
+    fetchAfdelingen()
+  ]);
+  const byNaam = new Map(ingredienten.map((i) => [dbKey(i.naam), i]));
+  const byAlias = new Map(aliassen.map((a) => [dbKey(a.alias), a.ingredient_id]));
+  return { byNaam, byAlias, afdelingen, volgorde: ingredienten.reduce((m, i) => Math.max(m, i.volgorde || 0), 0) };
 }
 
 // Vervangt alle onderdelen (en hun ingrediënten) van een recept door de
-// nieuw opgegeven set — eenvoudiger en robuuster dan proberen te diffen.
-async function saveOnderdelen(recipeId, onderdelen) {
+// nieuw opgegeven set. Alles in een paar grote stappen: onderdelen in één
+// insert, nieuwe ingrediënten in één insert, alle regels in één insert.
+async function saveOnderdelen(recipeId, onderdelen, ctx) {
   const { error: delErr } = await supabase.from('recipe_onderdelen').delete().eq('recipe_id', recipeId);
   check(delErr);
-  const afdelingen = await fetchAfdelingen();
-  let volgorde = 1;
-  for (const onderdeel of onderdelen) {
-    const { data: ro, error: roErr } = await supabase.from('recipe_onderdelen')
-      .insert({ recipe_id: recipeId, naam: onderdeel.naam || '', volgorde: volgorde++, instructies: onderdeel.instructies || [] })
-      .select().single();
-    check(roErr);
-    let ivolgorde = 1;
-    for (const ing of (onderdeel.ingredienten || [])) {
+  if (!onderdelen.length) return;
+
+  const { data: ros, error: roErr } = await supabase.from('recipe_onderdelen')
+    .insert(onderdelen.map((o, i) => ({ recipe_id: recipeId, naam: o.naam || '', volgorde: i + 1, instructies: o.instructies || [] })))
+    .select();
+  check(roErr);
+  const onderdeelId = new Map(ros.map((r) => [r.volgorde, r.id]));
+
+  // 1. Welke ingrediënten bestaan al, welke zijn nieuw?
+  const nieuw = new Map();
+  const afdelingUpdates = [];
+  for (const o of onderdelen) {
+    for (const ing of (o.ingredienten || [])) {
       if (!ing.naam) continue;
-      const ingredientId = await resolveIngredientId(ing.naam, afdelingen, ing.afdeling);
-      const { error: riErr } = await supabase.from('recipe_ingredienten').insert({
-        onderdeel_id: ro.id,
-        ingredient_id: ingredientId,
+      const clean = ing.naam.trim();
+      const key = dbKey(clean);
+      const bestaand = ctx.byNaam.get(key);
+      if (bestaand) {
+        // Bestaand ingrediënt: afdeling blijft zoals die is, tenzij er nog geen is.
+        if (!bestaand.afdeling_id) {
+          const afdelingId = kiesAfdelingId(clean, ing.afdeling, ctx.afdelingen);
+          if (afdelingId) { bestaand.afdeling_id = afdelingId; afdelingUpdates.push({ id: bestaand.id, afdeling_id: afdelingId }); }
+        }
+      } else if (!ctx.byAlias.has(key) && !nieuw.has(key)) {
+        nieuw.set(key, { naam: clean, afdeling_id: kiesAfdelingId(clean, ing.afdeling, ctx.afdelingen) });
+      }
+    }
+  }
+  if (nieuw.size) {
+    const rijen = [...nieuw.values()].map((n) => ({ ...n, volgorde: ++ctx.volgorde }));
+    const { data: gemaakt, error: cErr } = await supabase.from('ingredients').insert(rijen).select('id, naam, afdeling_id, volgorde');
+    check(cErr);
+    gemaakt.forEach((i) => ctx.byNaam.set(dbKey(i.naam), i));
+  }
+  for (const u of afdelingUpdates) {
+    const { error: uErr } = await supabase.from('ingredients').update({ afdeling_id: u.afdeling_id }).eq('id', u.id);
+    check(uErr);
+  }
+
+  // 2. Alle ingrediëntregels in één keer.
+  const regels = [];
+  onderdelen.forEach((o, oi) => {
+    let volgorde = 1;
+    for (const ing of (o.ingredienten || [])) {
+      if (!ing.naam) continue;
+      const key = dbKey(ing.naam);
+      const hit = ctx.byNaam.get(key);
+      regels.push({
+        onderdeel_id: onderdeelId.get(oi + 1),
+        ingredient_id: hit ? hit.id : ctx.byAlias.get(key),
         hoeveelheid: ing.hoeveelheid,
         eenheid: normalizeEenheid(ing.eenheid || ''),
         notitie: ing.notitie || null,
-        volgorde: ivolgorde++
+        volgorde: volgorde++
       });
-      check(riErr);
     }
+  });
+  if (regels.length) {
+    const { error: riErr } = await supabase.from('recipe_ingredienten').insert(regels);
+    check(riErr);
   }
 }
 
-export async function saveRecipe(recipe) {
+// ctx = optioneel resultaat van createImportContext() (hergebruiken bij meerdere recepten).
+export async function saveRecipe(recipe, ctx) {
   const { tagIds, tags, onderdelen, ...fields } = recipe;
   if (DEMO_MODE) {
     let saved;
@@ -352,7 +394,7 @@ export async function saveRecipe(recipe) {
   const { data, error } = await supabase.from('recipes').upsert(payload, { onConflict: 'id' }).select().single();
   check(error);
   if (tagIds) await setRecipeTags(data.id, tagIds);
-  if (onderdelen) await saveOnderdelen(data.id, onderdelen);
+  if (onderdelen) await saveOnderdelen(data.id, onderdelen, ctx || await createImportContext());
   const { data: full, error: fullErr } = await supabase.from('recipes').select(RECIPE_SELECT).eq('id', data.id).single();
   check(fullErr);
   return transformRecipeRow(full);

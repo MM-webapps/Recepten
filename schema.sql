@@ -293,6 +293,9 @@ begin
   end if;
 end $$;
 
+-- ───────────────────────────────────────────── Release 8: eigen extra regels voor de AI-prompt
+alter table instellingen add column if not exists prompt_extra text not null default '';
+
 -- ───────────────────────────────────────────── Release 7: Favorieten + Gekookt
 alter table recipes add column if not exists favoriet boolean not null default false;
 
