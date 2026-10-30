@@ -333,3 +333,58 @@ Het recept:
 `;
 }
 
+// ─────────────────────────────────────────── Verras me (release 9)
+// Kiest recepten voor de opgegeven dagen. Vaste regels:
+//  - nooit een recept dat al in de week staat, en nooit boven de maximale tijd;
+//  - niet dezelfde proteïne op twee opeenvolgende dagen en hooguit 2x per week
+//    (proteïne "Geen" valt hier buiten);
+//  - voorkeur (score) voor favorieten, recepten die lang niet gekookt zijn en
+//    recepten waarvan je veel in de koelkast hebt, met een beetje toeval.
+// Lukt het niet met alle regels, dan worden eerst de weekgrens en daarna het
+// "niet twee dagen achter elkaar" versoepeld (versoepeld = true).
+// week: { Ma: recipeId|null, ... } = de stand van de week zonder de dagen die vervangen worden.
+export function verrasVoorstel({ recipes, week, dagen, dagenVolgorde, maxTijd, laatstGekookt, fridgeNames, uitsluiten, random }) {
+  const rnd = random || Math.random;
+  const volgorde = dagenVolgorde;
+  const plan = { ...week };
+  const picks = {};
+  const onvolledig = [];
+  let versoepeld = false;
+  const byId = new Map(recipes.map((r) => [r.id, r]));
+  const vandaag = new Date();
+  const dagenGeleden = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return Math.round((new Date(vandaag.getFullYear(), vandaag.getMonth(), vandaag.getDate()) - new Date(y, m - 1, d)) / 86400000);
+  };
+  const score = (r) => {
+    let s = r.favoriet ? 3 : 0;
+    const laatst = laatstGekookt(r.id);
+    s += laatst ? Math.min(Math.max(dagenGeleden(laatst), 0) / 7, 8) * 0.375 : 3;
+    if (fridgeNames && fridgeNames.length) s += (fridgeMatchForRecipe(r, fridgeNames).pct / 100) * 2;
+    return s + rnd();
+  };
+  const proteineVan = (id) => { const r = byId.get(id); return r ? r.proteine : null; };
+  for (const dag of dagen) {
+    const idx = volgorde.indexOf(dag);
+    const buren = [volgorde[idx - 1], volgorde[idx + 1]].map((d) => (d ? proteineVan(plan[d]) : null)).filter(Boolean);
+    const inWeek = new Set(Object.values(plan).filter(Boolean));
+    const basis = recipes.filter((r) => !inWeek.has(r.id) && !(uitsluiten || []).includes(r.id) && (!maxTijd || r.bereidingstijd <= maxTijd));
+    const telProteine = (p) => Object.values(plan).filter((id) => id && proteineVan(id) === p).length;
+    const niveaus = [
+      (r) => r.proteine === 'Geen' || (!buren.includes(r.proteine) && telProteine(r.proteine) < 2),
+      (r) => r.proteine === 'Geen' || !buren.includes(r.proteine),
+      () => true
+    ];
+    let keuze = null;
+    for (let n = 0; n < niveaus.length && !keuze; n++) {
+      const kand = basis.filter(niveaus[n]);
+      if (kand.length) {
+        keuze = kand.map((r) => ({ r, s: score(r) })).sort((a, b) => b.s - a.s)[0].r;
+        if (n > 0) versoepeld = true;
+      }
+    }
+    if (keuze) { plan[dag] = keuze.id; picks[dag] = keuze.id; } else onvolledig.push(dag);
+  }
+  return { picks, onvolledig, versoepeld };
+}
+

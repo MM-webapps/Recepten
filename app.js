@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { DEMO_MODE } from './db.js';
 import { DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
-import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten, suggestAfdeling, shoppingListToText, buildAiPrompt } from './utils.js';
+import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten, suggestAfdeling, shoppingListToText, buildAiPrompt, verrasVoorstel } from './utils.js';
 
 const state = {
   loaded: false,
@@ -17,6 +17,7 @@ const state = {
   activeTab: 'recepten',
   filters: newFilters(),
   gekookt: [],
+  surprise: null, // { undo: {dag: entry|null}, ids: {dag: recipeId}, melding }
   pickerSortFridge: false,
   viewPersonen: null,
   planDay: null,
@@ -107,6 +108,10 @@ function flashButton(el, tekst) {
 
 function onContainerInput(e) {
   const t = e.target;
+  if (t && t.matches && t.matches('[data-surprise-tijd]') && state.modal && state.modal.type === 'surprise') {
+    state.modal.maxTijd = t.value;
+    return;
+  }
   if (t && t.matches && t.matches('[data-prompt-extra]') && state.modal && state.modal.step === 'prompt') {
     state.instellingen = { ...state.instellingen, prompt_extra: t.value };
     const pv = document.getElementById('prompt-preview');
@@ -119,6 +124,12 @@ async function onContainerChange(e) {
   if (t && t.matches && t.matches('[data-prompt-extra]')) {
     try { await db.updateInstellingen({ prompt_extra: t.value }); }
     catch (err) { console.error(err); if (state.modal) { state.modal.error = 'Je extra regels konden niet worden bewaard (is schema.sql opnieuw gedraaid?). Ze werken wel voor deze keer.'; rerender(); } }
+    return;
+  }
+  if (t && t.matches && t.matches('[data-surprise-dag]') && state.modal && state.modal.type === 'surprise') {
+    state.modal.dagen[t.dataset.surpriseDag] = t.checked;
+    state.modal.error = '';
+    rerender();
     return;
   }
   if (t && t.matches && t.matches('[data-prompt-ing]') && state.modal) {
@@ -227,6 +238,7 @@ function renderModalRoot() {
     else if (state.modal.type === 'manage') html += renderManageModal();
     else if (state.modal.type === 'shop-item') html += renderShopItemModal(state.modal.key);
     else if (state.modal.type === 'share') html += renderShareModal();
+    else if (state.modal.type === 'surprise') html += renderSurpriseModal();
   }
   if (state.confirm) html += renderConfirmDialog(state.confirm.message);
   return html;
@@ -487,6 +499,7 @@ function renderWeekmenu() {
             </div>
           </div>
           <div class="flex gap-2 flex-wrap">
+            <button class="btn btn-outline" style="white-space:nowrap" data-action="open-surprise">${icon('sparkles')} Verras me</button>
             ${filled > 0 ? `<button class="btn btn-outline" style="white-space:nowrap" data-action="open-share">${icon('share-2')} Delen</button>` : ''}
             ${filled > 0 ? `<button class="btn btn-outline" style="white-space:nowrap" data-action="ask-clear-week">${icon('trash-2')} Weekmenu leegmaken</button>` : ''}
             <button class="btn btn-primary" style="white-space:nowrap" data-action="go-shopping">${icon('shopping-cart')} Boodschappenlijst</button>
@@ -494,6 +507,11 @@ function renderWeekmenu() {
         </div>
       </div>
     </div>
+    ${state.surprise ? `
+      <div class="banner banner-info mb-4" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <span>${icon('sparkles')} ${escapeHtml(state.surprise.melding)}</span>
+        <button class="btn btn-outline btn-sm" data-action="surprise-undo">${icon('undo-2')} Ongedaan maken</button>
+      </div>` : ''}
     <div class="week-grid">${DAGEN.map((d) => renderWeekDay(d)).join('')}</div>
   `;
 }
@@ -523,6 +541,7 @@ function renderWeekDay(dag) {
               <button data-action="day-personen-plus" data-day="${dag}">${icon('plus')}</button>
             </div>
           </div>
+          ${state.surprise && state.surprise.ids[dag] === recipe.id ? `<button class="btn btn-outline btn-sm btn-block mb-2" data-action="surprise-other" data-day="${dag}">${icon('refresh-cw')} Ander voorstel</button>` : ''}
           <button class="btn ${dagGekookt(dag, recipe) ? 'btn-primary' : 'btn-outline'} btn-sm btn-block mb-2" data-action="toggle-gekookt-dag" data-day="${dag}">${icon('check')} Gekookt</button>
           <div class="flex gap-2">
             <button class="btn btn-outline btn-sm" style="flex:1" data-action="open-pick" data-day="${dag}">Wijzig</button>
@@ -643,6 +662,52 @@ function renderShopSection(title, items, checked, muted) {
       `).join('')}
     </div>
   `;
+}
+
+// ─────────────────────────────────────────── Verras me
+function renderSurpriseModal() {
+  const m = state.modal;
+  const aantal = DAGEN.filter((d) => m.dagen[d]).length;
+  return `
+    <div class="modal-backdrop">
+      <div class="modal-card narrow">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="display" style="font-size:18px;margin:0">Verras me</h2>
+          <button class="btn btn-outline btn-icon" data-action="close-modal">${icon('x')}</button>
+        </div>
+        <p class="text-sm text-soft mb-2">Welke dagen mag ik invullen? Lege dagen staan aan. Een dag die al gevuld is, staat uit: zet hem aan om hem te vervangen.</p>
+        ${DAGEN.map((d) => {
+          const entry = state.weekmenu[d];
+          const recipe = entry ? getRecipe(entry.recipeId) : null;
+          return `<label class="share-optie"><input type="checkbox" data-surprise-dag="${d}" ${m.dagen[d] ? 'checked' : ''}>
+            <span>${DAG_NAMEN[d]}${recipe ? `<span class="text-sm text-soft"> — al gevuld: ${escapeHtml(recipe.titel)}</span>` : ''}</span></label>`;
+        }).join('')}
+        <div class="mt-3">
+          <label class="field-label">Maximale totale tijd (minuten, leeg = geen grens)</label>
+          <input class="input" type="number" min="0" data-surprise-tijd placeholder="bijv. 45" value="${escapeHtml(m.maxTijd || '')}">
+        </div>
+        <p class="text-sm text-soft mt-3">Ik let op: niet dezelfde proteïne twee dagen achter elkaar (en hooguit 2× per week), en geef voorrang aan favorieten, recepten die je lang niet gekookt hebt en recepten met veel uit je koelkast.</p>
+        ${m.error ? `<div class="mt-4">${bannerError(m.error)}</div>` : ''}
+        <div class="flex justify-end gap-2 mt-4">
+          <button class="btn btn-outline" data-action="close-modal">Annuleren</button>
+          <button class="btn btn-primary" data-action="surprise-run" ${aantal ? '' : 'disabled'}>${icon('sparkles')} Verras me (${aantal})</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function weekStand(zonderDagen) {
+  const week = {};
+  DAGEN.forEach((d) => { week[d] = zonderDagen.includes(d) || !state.weekmenu[d] ? null : state.weekmenu[d].recipeId; });
+  return week;
+}
+
+function voorstelVoor(dagen, maxTijd, uitsluiten) {
+  return verrasVoorstel({
+    recipes: state.recipes, week: weekStand(dagen), dagen, dagenVolgorde: DAGEN, maxTijd,
+    laatstGekookt: (id) => kookStats(id).laatst, fridgeNames: state.fridge.map((f) => f.naam), uitsluiten
+  });
 }
 
 // ─────────────────────────────────────────── Delen (weekmenu en/of boodschappenlijst)
@@ -1645,6 +1710,68 @@ async function handleAction(action, el) {
       const waarde = el.dataset.waarde === '1';
       state.instellingen = { ...state.instellingen, boodschappen_thuis: waarde };
       await db.updateInstellingen({ boodschappen_thuis: waarde });
+      rerender();
+      break;
+    }
+
+    case 'open-surprise': {
+      const dagen = {};
+      DAGEN.forEach((d) => { dagen[d] = !state.weekmenu[d]; });
+      state.modal = { type: 'surprise', dagen, maxTijd: '', error: '' };
+      rerender();
+      break;
+    }
+
+    case 'surprise-run': {
+      const m = state.modal;
+      const dagen = DAGEN.filter((d) => m.dagen[d]);
+      if (!dagen.length) break;
+      const maxTijd = Number(m.maxTijd) > 0 ? Number(m.maxTijd) : 0;
+      if (state.recipes.length === 0) { m.error = 'Je hebt nog geen recepten om uit te kiezen.'; rerender(); break; }
+      const { picks, onvolledig, versoepeld } = voorstelVoor(dagen, maxTijd, []);
+      const gekozen = Object.keys(picks);
+      if (!gekozen.length) {
+        m.error = maxTijd ? `Geen recepten gevonden die binnen ${maxTijd} minuten klaar zijn (of ze staan al in je week).` : 'Geen recepten meer beschikbaar die nog niet in je week staan.';
+        rerender();
+        break;
+      }
+      const undo = {};
+      gekozen.forEach((d) => { undo[d] = state.weekmenu[d] || null; });
+      const personen = state.instellingen.huishoud_personen;
+      for (const d of gekozen) {
+        await db.setWeekmenuDag(d, picks[d], personen);
+        state.weekmenu[d] = { recipeId: picks[d], personen };
+      }
+      let melding = `Voorstel ingevuld voor ${gekozen.length} ${gekozen.length === 1 ? 'dag' : 'dagen'}.`;
+      if (onvolledig.length) melding += ` Voor ${onvolledig.map((d) => DAG_NAMEN[d]).join(', ')} was geen passend recept meer.`;
+      if (versoepeld) melding += ' Niet alles kon aan de proteïne-regels voldoen, daar waren te weinig recepten voor.';
+      state.surprise = { undo, ids: { ...picks }, melding, maxTijd };
+      state.modal = null;
+      rerender();
+      break;
+    }
+
+    case 'surprise-other': {
+      const dag = el.dataset.day;
+      const huidig = state.weekmenu[dag];
+      const { picks } = voorstelVoor([dag], state.surprise.maxTijd || 0, huidig ? [huidig.recipeId] : []);
+      if (!picks[dag]) { state.surprise.melding = 'Geen ander passend recept gevonden voor deze dag.'; rerender(); break; }
+      const personen = huidig ? huidig.personen : state.instellingen.huishoud_personen;
+      await db.setWeekmenuDag(dag, picks[dag], personen);
+      state.weekmenu[dag] = { recipeId: picks[dag], personen };
+      state.surprise.ids[dag] = picks[dag];
+      rerender();
+      break;
+    }
+
+    case 'surprise-undo': {
+      const undo = state.surprise ? state.surprise.undo : {};
+      for (const d of Object.keys(undo)) {
+        const prev = undo[d];
+        await db.setWeekmenuDag(d, prev ? prev.recipeId : null, prev ? prev.personen : null);
+        state.weekmenu[d] = prev;
+      }
+      state.surprise = null;
       rerender();
       break;
     }
