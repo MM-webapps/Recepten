@@ -260,3 +260,142 @@ export function shoppingListToText(groepen) {
   });
   return regels.join('\n');
 }
+
+// Bouwt de volledige AI-prompt (zie ook ai-prompt.md) met de lijsten uit de
+// app zelf: basis, proteïne, keuken, afdelingen en eenheden.
+export function buildAiPrompt({ basis, proteine, keuken, afdelingen, eenheden, extra, ingredienten }) {
+  const lijst = (a) => a.join(', ');
+  const heeft = (e) => eenheden.includes(e);
+  const hints = [
+    heeft('gr') ? '"gr" in plaats van "gram" of "g"' : '',
+    heeft('st') ? '"st" in plaats van "stuk" of "stuks"' : '',
+    heeft('tenen') ? '"tenen" voor knoflook ("teentjes" wordt dus "tenen")' : '',
+    heeft('tl') ? '"tl" in plaats van "theelepel"' : ''
+  ].filter(Boolean);
+  const regels = [
+    `Kies voor "basis", "proteine" en "keuken" altijd exact één van de genoemde opties, letterlijk overgenomen (geen eigen bewoording). Gebruik "${basis[basis.length - 1]}" (bij proteine "${proteine[proteine.length - 1]}", bij keuken "${keuken[keuken.length - 1]}") als niets goed past.`,
+    'Schat "personen" in als het niet in het recept staat.',
+    `Tijd, alles in minuten:
+  - "voorbereidingstijd" is de tijd dat je zelf actief bezig bent (snijden, roeren, bakken met aandacht).
+  - "oventijd" is de tijd dat het gerecht zichzelf klaarmaakt in de oven of pan (laten sudderen, bakken in de oven, rijzen), zonder handwerk.
+  - "bereidingstijd" is het totaal: voorbereidingstijd + oventijd.
+  - Staat er in het recept maar één totale tijd, of weet je de verdeling niet? Laat "voorbereidingstijd" en "oventijd" dan weg en vul alleen "bereidingstijd" in (schat die als er niets staat).`,
+    `Gebruik voor "eenheid" uitsluitend: ${lijst(eenheden)} (of laat leeg).${hints.length ? ` Schrijf dus ${hints.join(', ')}.` : ''} Zo telt de boodschappenlijst dezelfde ingrediënten van verschillende recepten goed bij elkaar op.`,
+    '"hoeveelheid" is een getal (gebruik een punt voor decimalen, bv. 0.5), of null wanneer er geen hoeveelheid is aangegeven (bv. "naar smaak" of "een snufje").',
+    'Gebruik voor "naam" van een ingrediënt de gewone, korte naam in het enkelvoud of zoals je het in de winkel koopt, zonder bereidingswijze ("ui", niet "fijngesneden ui"; "kipfilet", niet "gebakken kipfilet"), en gebruik voor hetzelfde product steeds dezelfde naam.',
+    `Kies voor "afdeling" bij elk ingrediënt exact één van deze afdelingen, letterlijk overgenomen (geen eigen bewoording): ${lijst(afdelingen)}. Kies de afdeling waar je het product in een gewone Nederlandse supermarkt vindt. Gebruik "${afdelingen[afdelingen.length - 1]}" alleen als niets past.`,
+    'Bron: staat het recept op een foto uit een kookboek? Zet dan in "bron" de boektitel en de bladzijde, bv. "Ottolenghi Simple, blz 45". Komt het van een website, zet dan de link. Weet je het niet, laat "bron" leeg.',
+    'Eén handeling per stap in "instructies", kort en duidelijk.',
+    'Geef uitsluitend het JSON-object terug, verder niets — het moet direct als .json-bestand opgeslagen en geüpload kunnen worden.'
+  ];
+  if (ingredienten && ingredienten.length) {
+    regels.push(`Staat een ingrediënt in onderstaande lijst van mijn bestaande ingrediënten? Gebruik dan exact die naam. Alleen als iets er echt niet in staat, bedenk je een nieuwe naam.\n  Bestaande ingrediënten: ${lijst(ingredienten)}`);
+  }
+  const eigen = (extra || '').trim();
+  if (eigen) regels.push(`Extra regels van mij:\n${eigen.split('\n').map((r) => '  ' + r).join('\n')}`);
+
+  return `Zet het volgende recept om naar geldige JSON met exact deze structuur. Geef ALLEEN het JSON-object terug — geen uitleg, geen inleidende tekst, geen markdown-codeblok (dus niet tussen \`\`\`).
+
+Voor een GEWOON recept (één geheel, geen aparte onderdelen) gebruik je één item in "onderdelen" met "naam": "":
+
+{
+  "titel": "string",
+  "basis": "kies exact één van: ${lijst(basis)}",
+  "proteine": "kies exact één van: ${lijst(proteine)}",
+  "keuken": "kies exact één van: ${lijst(keuken)}",
+  "personen": 4,
+  "voorbereidingstijd": 20,
+  "oventijd": 35,
+  "bereidingstijd": 55,
+  "onderdelen": [
+    {
+      "naam": "",
+      "ingredienten": [
+        { "naam": "kipfilet", "hoeveelheid": 500, "eenheid": "${heeft('gr') ? 'gr' : eenheden[0] || ''}", "afdeling": "${afdelingen.find((a) => /vlees/i.test(a)) || afdelingen[0]}" },
+        { "naam": "zout", "hoeveelheid": null, "eenheid": "", "afdeling": "${afdelingen.find((a) => /kruid/i.test(a)) || afdelingen[0]}" }
+      ],
+      "instructies": ["Eerste stap.", "Tweede stap.", "..."]
+    }
+  ],
+  "bron": "boektitel + bladzijde, of een link, of leeg"
+}
+
+Bestaat het recept uit aparte delen die je apart bereidt (bv. een marinade en een saus, of een deeg en een vulling)? Geef dan per deel een eigen item in "onderdelen", elk met een eigen "naam" (bv. "Marinade", "Saus"), eigen "ingredienten" en eigen "instructies".
+
+Regels:
+${regels.map((r) => '- ' + r).join('\n')}
+
+Wil je meerdere recepten in één keer? Geef dan een JSON-array van meerdere van dit soort objecten terug ([ {...}, {...} ]).
+
+Het recept:
+
+[plak hier de tekst van het recept, een link, of een omschrijving]
+`;
+}
+
+// ─────────────────────────────────────────── Verras me (release 9)
+// Kiest recepten voor de opgegeven dagen. Regels:
+//  - nooit een recept dat al in de week staat, en nooit boven de maximale tijd;
+//  - voorkeur (score) voor favorieten, recepten die lang niet gekookt zijn en
+//    recepten waarvan je veel in de koelkast hebt, met een beetje toeval.
+// week: { Ma: recipeId|null, ... } = de stand van de week zonder de dagen die vervangen worden.
+export function verrasVoorstel({ recipes, week, dagen, maxTijd, laatstGekookt, fridgeNames, uitsluiten, random }) {
+  const rnd = random || Math.random;
+  const plan = { ...week };
+  const picks = {};
+  const onvolledig = [];
+  const vandaag = new Date();
+  const dagenGeleden = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return Math.round((new Date(vandaag.getFullYear(), vandaag.getMonth(), vandaag.getDate()) - new Date(y, m - 1, d)) / 86400000);
+  };
+  const score = (r) => {
+    let s = r.favoriet ? 3 : 0;
+    const laatst = laatstGekookt(r.id);
+    s += laatst ? Math.min(Math.max(dagenGeleden(laatst), 0) / 7, 8) * 0.375 : 3;
+    if (fridgeNames && fridgeNames.length) s += (fridgeMatchForRecipe(r, fridgeNames).pct / 100) * 2;
+    return s + rnd();
+  };
+  for (const dag of dagen) {
+    const inWeek = new Set(Object.values(plan).filter(Boolean));
+    const kand = recipes.filter((r) => !inWeek.has(r.id) && !(uitsluiten || []).includes(r.id) && (!maxTijd || r.bereidingstijd <= maxTijd));
+    if (!kand.length) { onvolledig.push(dag); continue; }
+    const keuze = kand.map((r) => ({ r, s: score(r) })).sort((x, y) => y.s - x.s)[0].r;
+    plan[dag] = keuze.id;
+    picks[dag] = keuze.id;
+  }
+  return { picks, onvolledig };
+}
+
+// ─────────────────────────────────────────── Kookmodus (release 10)
+// Zoekt tijden in een bereidingsstap ("15 minuten", "1,5 uur", "10-15 min")
+// en geeft per tijd het aantal seconden en een label voor de timerknop.
+export function timersUitTekst(tekst) {
+  const re = /(\d+(?:[.,]\d+)?)(?:\s*(?:-|–|tot)\s*(\d+(?:[.,]\d+)?))?\s*(minuten|minuut|min|uur|seconden|sec)\b/gi;
+  const uit = [];
+  let m;
+  while ((m = re.exec(tekst || '')) !== null) {
+    const lo = parseFloat(m[1].replace(',', '.'));
+    const hi = m[2] ? parseFloat(m[2].replace(',', '.')) : null;
+    const eenheid = m[3].toLowerCase();
+    const factor = eenheid === 'uur' ? 3600 : (eenheid.startsWith('sec') ? 1 : 60);
+    const seconden = Math.round(lo * factor);
+    if (seconden <= 0) continue;
+    const naam = eenheid === 'uur' ? 'uur' : (factor === 1 ? 'sec' : 'min');
+    const label = `${m[1]}${hi != null ? '–' + m[2] : ''} ${naam}`;
+    if (!uit.some((t) => t.seconden === seconden && t.label === label)) uit.push({ seconden, label });
+  }
+  return uit;
+}
+
+// Alle stappen van een recept als één lijst, elk met het onderdeel waar het bij hoort.
+export function kookStappen(recipe) {
+  const stappen = [];
+  for (const o of (recipe.onderdelen || [])) {
+    const instr = (o.instructies || []).filter(Boolean);
+    if (instr.length) instr.forEach((tekst) => stappen.push({ onderdeel: o, tekst }));
+    else if ((o.ingredienten || []).length) stappen.push({ onderdeel: o, tekst: 'Bereid dit onderdeel met de ingrediënten hierboven.' });
+  }
+  if (!stappen.length) stappen.push({ onderdeel: { naam: '', ingredienten: [] }, tekst: 'Dit recept heeft geen bereidingsstappen.' });
+  return stappen;
+}
