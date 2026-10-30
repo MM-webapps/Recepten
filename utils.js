@@ -334,23 +334,16 @@ Het recept:
 }
 
 // ─────────────────────────────────────────── Verras me (release 9)
-// Kiest recepten voor de opgegeven dagen. Vaste regels:
+// Kiest recepten voor de opgegeven dagen. Regels:
 //  - nooit een recept dat al in de week staat, en nooit boven de maximale tijd;
-//  - niet dezelfde proteïne op twee opeenvolgende dagen en hooguit 2x per week
-//    (proteïne "Geen" valt hier buiten);
 //  - voorkeur (score) voor favorieten, recepten die lang niet gekookt zijn en
 //    recepten waarvan je veel in de koelkast hebt, met een beetje toeval.
-// Lukt het niet met alle regels, dan worden eerst de weekgrens en daarna het
-// "niet twee dagen achter elkaar" versoepeld (versoepeld = true).
 // week: { Ma: recipeId|null, ... } = de stand van de week zonder de dagen die vervangen worden.
-export function verrasVoorstel({ recipes, week, dagen, dagenVolgorde, maxTijd, laatstGekookt, fridgeNames, uitsluiten, random }) {
+export function verrasVoorstel({ recipes, week, dagen, maxTijd, laatstGekookt, fridgeNames, uitsluiten, random }) {
   const rnd = random || Math.random;
-  const volgorde = dagenVolgorde;
   const plan = { ...week };
   const picks = {};
   const onvolledig = [];
-  let versoepeld = false;
-  const byId = new Map(recipes.map((r) => [r.id, r]));
   const vandaag = new Date();
   const dagenGeleden = (iso) => {
     const [y, m, d] = iso.split('-').map(Number);
@@ -363,28 +356,46 @@ export function verrasVoorstel({ recipes, week, dagen, dagenVolgorde, maxTijd, l
     if (fridgeNames && fridgeNames.length) s += (fridgeMatchForRecipe(r, fridgeNames).pct / 100) * 2;
     return s + rnd();
   };
-  const proteineVan = (id) => { const r = byId.get(id); return r ? r.proteine : null; };
   for (const dag of dagen) {
-    const idx = volgorde.indexOf(dag);
-    const buren = [volgorde[idx - 1], volgorde[idx + 1]].map((d) => (d ? proteineVan(plan[d]) : null)).filter(Boolean);
     const inWeek = new Set(Object.values(plan).filter(Boolean));
-    const basis = recipes.filter((r) => !inWeek.has(r.id) && !(uitsluiten || []).includes(r.id) && (!maxTijd || r.bereidingstijd <= maxTijd));
-    const telProteine = (p) => Object.values(plan).filter((id) => id && proteineVan(id) === p).length;
-    const niveaus = [
-      (r) => r.proteine === 'Geen' || (!buren.includes(r.proteine) && telProteine(r.proteine) < 2),
-      (r) => r.proteine === 'Geen' || !buren.includes(r.proteine),
-      () => true
-    ];
-    let keuze = null;
-    for (let n = 0; n < niveaus.length && !keuze; n++) {
-      const kand = basis.filter(niveaus[n]);
-      if (kand.length) {
-        keuze = kand.map((r) => ({ r, s: score(r) })).sort((a, b) => b.s - a.s)[0].r;
-        if (n > 0) versoepeld = true;
-      }
-    }
-    if (keuze) { plan[dag] = keuze.id; picks[dag] = keuze.id; } else onvolledig.push(dag);
+    const kand = recipes.filter((r) => !inWeek.has(r.id) && !(uitsluiten || []).includes(r.id) && (!maxTijd || r.bereidingstijd <= maxTijd));
+    if (!kand.length) { onvolledig.push(dag); continue; }
+    const keuze = kand.map((r) => ({ r, s: score(r) })).sort((x, y) => y.s - x.s)[0].r;
+    plan[dag] = keuze.id;
+    picks[dag] = keuze.id;
   }
-  return { picks, onvolledig, versoepeld };
+  return { picks, onvolledig };
 }
 
+// ─────────────────────────────────────────── Kookmodus (release 10)
+// Zoekt tijden in een bereidingsstap ("15 minuten", "1,5 uur", "10-15 min")
+// en geeft per tijd het aantal seconden en een label voor de timerknop.
+export function timersUitTekst(tekst) {
+  const re = /(\d+(?:[.,]\d+)?)(?:\s*(?:-|–|tot)\s*(\d+(?:[.,]\d+)?))?\s*(minuten|minuut|min|uur|seconden|sec)\b/gi;
+  const uit = [];
+  let m;
+  while ((m = re.exec(tekst || '')) !== null) {
+    const lo = parseFloat(m[1].replace(',', '.'));
+    const hi = m[2] ? parseFloat(m[2].replace(',', '.')) : null;
+    const eenheid = m[3].toLowerCase();
+    const factor = eenheid === 'uur' ? 3600 : (eenheid.startsWith('sec') ? 1 : 60);
+    const seconden = Math.round(lo * factor);
+    if (seconden <= 0) continue;
+    const naam = eenheid === 'uur' ? 'uur' : (factor === 1 ? 'sec' : 'min');
+    const label = `${m[1]}${hi != null ? '–' + m[2] : ''} ${naam}`;
+    if (!uit.some((t) => t.seconden === seconden && t.label === label)) uit.push({ seconden, label });
+  }
+  return uit;
+}
+
+// Alle stappen van een recept als één lijst, elk met het onderdeel waar het bij hoort.
+export function kookStappen(recipe) {
+  const stappen = [];
+  for (const o of (recipe.onderdelen || [])) {
+    const instr = (o.instructies || []).filter(Boolean);
+    if (instr.length) instr.forEach((tekst) => stappen.push({ onderdeel: o, tekst }));
+    else if ((o.ingredienten || []).length) stappen.push({ onderdeel: o, tekst: 'Bereid dit onderdeel met de ingrediënten hierboven.' });
+  }
+  if (!stappen.length) stappen.push({ onderdeel: { naam: '', ingredienten: [] }, tekst: 'Dit recept heeft geen bereidingsstappen.' });
+  return stappen;
+}

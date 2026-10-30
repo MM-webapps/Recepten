@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { DEMO_MODE } from './db.js';
 import { DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
-import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten, suggestAfdeling, shoppingListToText, buildAiPrompt, verrasVoorstel } from './utils.js';
+import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten, suggestAfdeling, shoppingListToText, buildAiPrompt, verrasVoorstel, timersUitTekst, kookStappen } from './utils.js';
 
 const state = {
   loaded: false,
@@ -199,6 +199,7 @@ function renderLoadError(msg) {
 
 // ─────────────────────────────────────────── Render (top-level)
 function rerender() {
+  if (cook.tick && !(state.modal && state.modal.type === 'cook')) stopCookRuntime();
   root.innerHTML = renderMain();
   modalRoot.innerHTML = renderModalRoot();
   hydrateIcons();
@@ -239,6 +240,7 @@ function renderModalRoot() {
     else if (state.modal.type === 'shop-item') html += renderShopItemModal(state.modal.key);
     else if (state.modal.type === 'share') html += renderShareModal();
     else if (state.modal.type === 'surprise') html += renderSurpriseModal();
+    else if (state.modal.type === 'cook') html += renderCookModal();
   }
   if (state.confirm) html += renderConfirmDialog(state.confirm.message);
   return html;
@@ -542,6 +544,7 @@ function renderWeekDay(dag) {
             </div>
           </div>
           ${state.surprise && state.surprise.ids[dag] === recipe.id ? `<button class="btn btn-outline btn-sm btn-block mb-2" data-action="surprise-other" data-day="${dag}">${icon('refresh-cw')} Ander voorstel</button>` : ''}
+          <button class="btn btn-outline btn-sm btn-block mb-2" data-action="open-cook" data-id="${recipe.id}" data-personen="${personen}">${icon('chef-hat')} Kookmodus</button>
           <button class="btn ${dagGekookt(dag, recipe) ? 'btn-primary' : 'btn-outline'} btn-sm btn-block mb-2" data-action="toggle-gekookt-dag" data-day="${dag}">${icon('check')} Gekookt</button>
           <div class="flex gap-2">
             <button class="btn btn-outline btn-sm" style="flex:1" data-action="open-pick" data-day="${dag}">Wijzig</button>
@@ -664,6 +667,143 @@ function renderShopSection(title, items, checked, muted) {
   `;
 }
 
+// ─────────────────────────────────────────── Kookmodus
+const cook = { timers: [], tick: null, wake: null, audio: null, nextId: 1 };
+
+function mmss(sec) {
+  const s = Math.max(0, sec);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(r).padStart(2, '0');
+}
+
+async function requestWake() {
+  try {
+    if ('wakeLock' in navigator) {
+      cook.wake = await navigator.wakeLock.request('screen');
+      cook.wake.addEventListener('release', () => { cook.wake = null; });
+      if (state.modal && state.modal.type === 'cook') { state.modal.wake = true; const el = document.getElementById('cook-wake'); if (el) el.hidden = false; }
+    }
+  } catch (_) { /* niet ondersteund of geweigerd: het scherm kan dan dimmen */ }
+}
+
+function startCookRuntime() {
+  requestWake();
+  if (!cook.tick) cook.tick = setInterval(cookTick, 1000);
+}
+
+function stopCookRuntime() {
+  if (cook.tick) clearInterval(cook.tick);
+  cook.tick = null;
+  cook.timers = [];
+  try { if (cook.wake) cook.wake.release(); } catch (_) { /* niets aan te doen */ }
+  cook.wake = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.modal && state.modal.type === 'cook') {
+    if (!cook.wake) requestWake();
+    cookTick();
+  }
+});
+
+function cookAlarm() {
+  try { if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]); } catch (_) { /* geen trilfunctie */ }
+  try {
+    const ctx = cook.audio;
+    if (!ctx) return;
+    [0, 0.4, 0.8].forEach((t) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.frequency.value = 880; osc.connect(gain); gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + t);
+      gain.gain.setValueAtTime(0, ctx.currentTime + t + 0.25);
+      osc.start(ctx.currentTime + t); osc.stop(ctx.currentTime + t + 0.3);
+    });
+  } catch (_) { /* geen geluid mogelijk */ }
+}
+
+function cookTick() {
+  if (!state.modal || state.modal.type !== 'cook') return;
+  const nu = Date.now();
+  let klaar = false;
+  for (const t of cook.timers) {
+    if (!t.done && t.eind <= nu) { t.done = true; klaar = true; }
+  }
+  if (klaar) { cookAlarm(); rerender(); return; }
+  document.querySelectorAll('[data-timer-tijd]').forEach((el) => {
+    const t = cook.timers.find((x) => String(x.id) === el.dataset.timerTijd);
+    if (t && !t.done) el.textContent = mmss(Math.ceil((t.eind - nu) / 1000));
+  });
+}
+
+function startTimer(seconden, label) {
+  try {
+    if (!cook.audio && (window.AudioContext || window.webkitAudioContext)) cook.audio = new (window.AudioContext || window.webkitAudioContext)();
+    if (cook.audio && cook.audio.state === 'suspended') cook.audio.resume();
+  } catch (_) { /* geluid werkt dan niet, trillen/beeld wel */ }
+  cook.timers.push({ id: cook.nextId++, label, eind: Date.now() + seconden * 1000, done: false });
+}
+
+function renderCookModal() {
+  const m = state.modal;
+  const recipe = getRecipe(m.id);
+  if (!recipe) return '';
+  const stappen = kookStappen(recipe);
+  const i = Math.min(m.stap, stappen.length - 1);
+  const stap = stappen[i];
+  const laatste = i === stappen.length - 1;
+  const factor = recipe.personen > 0 ? m.personen / recipe.personen : 1;
+  const timers = timersUitTekst(stap.tekst);
+  const pct = Math.round(((i + 1) / stappen.length) * 100);
+  const nu = Date.now();
+  return `
+    <div class="modal-backdrop cook-backdrop">
+      <div class="modal-card cook">
+        <div class="flex justify-between items-center gap-3 mb-2">
+          <div style="min-width:0">
+            <div class="display" style="font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(recipe.titel)}</div>
+            <div class="text-sm text-soft">Stap ${i + 1} van ${stappen.length}<span id="cook-wake" ${m.wake ? '' : 'hidden'}> · scherm blijft aan</span></div>
+          </div>
+          <button class="btn btn-outline btn-icon" data-action="cook-close" aria-label="Sluiten">${icon('x')}</button>
+        </div>
+        <div class="progress-track mb-3"><div class="progress-fill" style="width:${pct}%"></div></div>
+        ${cook.timers.length ? `<div class="cook-timers mb-3">${cook.timers.map((t) => `
+          <span class="cook-timer ${t.done ? 'klaar' : ''}">
+            ${icon('timer')} ${escapeHtml(t.label)} · <b data-timer-tijd="${t.id}">${t.done ? 'Klaar!' : mmss(Math.ceil((t.eind - nu) / 1000))}</b>
+            <button class="cook-timer-x" data-action="cook-timer-stop" data-id="${t.id}" aria-label="Stop timer">×</button>
+          </span>`).join('')}</div>` : ''}
+        <div class="flex items-center gap-2 mb-3 flex-wrap">
+          <span class="text-sm">${icon('users')}</span>
+          <div class="stepper">
+            <button data-action="cook-personen-min">${icon('minus')}</button>
+            <span class="mono">${m.personen}</span>
+            <button data-action="cook-personen-plus">${icon('plus')}</button>
+          </div>
+          ${recipe.oventijd > 0 ? `<button class="btn btn-outline btn-sm" style="margin-left:auto" data-action="cook-timer" data-sec="${recipe.oventijd * 60}" data-label="oven ${recipe.oventijd} min">${icon('timer')} Oventimer ${recipe.oventijd} min</button>` : ''}
+        </div>
+        ${stap.onderdeel.naam ? `<h3 class="display mb-2" style="font-size:15px;color:var(--teal)">${escapeHtml(stap.onderdeel.naam)}</h3>` : ''}
+        ${(stap.onderdeel.ingredienten || []).length ? `
+          <button class="btn btn-outline btn-sm mb-2" data-action="cook-ing-toggle">${icon(m.ingOpen ? 'chevron-up' : 'chevron-down')} Ingrediënten (${stap.onderdeel.ingredienten.length})</button>
+          ${m.ingOpen ? `<div class="mb-3">${ingredientenListHtml(stap.onderdeel.ingredienten, factor)}</div>` : ''}` : ''}
+        <div class="cook-stap">${escapeHtml(stap.tekst)}</div>
+        ${timers.length ? `<div class="flex gap-2 flex-wrap mb-3">${timers.map((t) => `<button class="btn btn-primary" data-action="cook-timer" data-sec="${t.seconden}" data-label="${escapeHtml(t.label)}">${icon('timer')} Start timer ${escapeHtml(t.label)}</button>`).join('')}</div>` : ''}
+        <div class="cook-nav">
+          <button class="btn btn-outline" data-action="cook-prev" ${i === 0 ? 'disabled' : ''}>${icon('arrow-left')} Vorige</button>
+          ${laatste
+            ? `<button class="btn btn-primary" data-action="cook-done">${icon('check')} Klaar, gekookt</button>`
+            : `<button class="btn btn-primary" data-action="cook-next">Volgende ${icon('arrow-right')}</button>`}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function sluitKookmodus() {
+  const m = state.modal;
+  state.modal = m && m.terug ? { type: 'view', id: m.id } : null;
+  stopCookRuntime();
+  rerender();
+}
+
 // ─────────────────────────────────────────── Verras me
 function renderSurpriseModal() {
   const m = state.modal;
@@ -686,7 +826,7 @@ function renderSurpriseModal() {
           <label class="field-label">Maximale totale tijd (minuten, leeg = geen grens)</label>
           <input class="input" type="number" min="0" data-surprise-tijd placeholder="bijv. 45" value="${escapeHtml(m.maxTijd || '')}">
         </div>
-        <p class="text-sm text-soft mt-3">Ik let op: niet dezelfde proteïne twee dagen achter elkaar (en hooguit 2× per week), en geef voorrang aan favorieten, recepten die je lang niet gekookt hebt en recepten met veel uit je koelkast.</p>
+        <p class="text-sm text-soft mt-3">Ik geef voorrang aan favorieten, recepten die je lang niet gekookt hebt en recepten met veel uit je koelkast, en neem nooit een recept dat al in je week staat.</p>
         ${m.error ? `<div class="mt-4">${bannerError(m.error)}</div>` : ''}
         <div class="flex justify-end gap-2 mt-4">
           <button class="btn btn-outline" data-action="close-modal">Annuleren</button>
@@ -705,7 +845,7 @@ function weekStand(zonderDagen) {
 
 function voorstelVoor(dagen, maxTijd, uitsluiten) {
   return verrasVoorstel({
-    recipes: state.recipes, week: weekStand(dagen), dagen, dagenVolgorde: DAGEN, maxTijd,
+    recipes: state.recipes, week: weekStand(dagen), dagen, maxTijd,
     laatstGekookt: (id) => kookStats(id).laatst, fridgeNames: state.fridge.map((f) => f.naam), uitsluiten
   });
 }
@@ -1271,7 +1411,8 @@ function renderViewModal(recipe) {
           <select id="plan-day-select" class="input" style="width:auto">
             ${DAGEN.map((d) => `<option value="${d}" ${d === planDay ? 'selected' : ''}>${DAG_NAMEN[d]}</option>`).join('')}
           </select>
-          <button class="btn btn-primary btn-sm" data-action="plan-from-detail" data-id="${recipe.id}">${icon('calendar')} Inplannen</button>
+          <button class="btn btn-primary btn-sm" data-action="open-cook" data-id="${recipe.id}" data-terug="1">${icon('chef-hat')} Kookmodus</button>
+          <button class="btn btn-outline btn-sm" data-action="plan-from-detail" data-id="${recipe.id}">${icon('calendar')} Inplannen</button>
           <button class="btn btn-outline btn-sm" data-action="download-json" data-id="${recipe.id}">${icon('download')} JSON</button>
           <button class="btn btn-outline btn-sm" data-action="open-edit" data-id="${recipe.id}">${icon('pencil')} Bewerken</button>
           <button class="btn btn-danger btn-sm" style="margin-left:auto" data-action="ask-delete" data-id="${recipe.id}">${icon('trash-2')} Verwijderen</button>
@@ -1714,6 +1855,61 @@ async function handleAction(action, el) {
       break;
     }
 
+    case 'open-cook': {
+      const recipe = getRecipe(el.dataset.id);
+      if (!recipe) break;
+      const personen = Number(el.dataset.personen) || (el.dataset.terug ? (state.viewPersonen || recipe.personen) : recipe.personen);
+      state.modal = { type: 'cook', id: recipe.id, stap: 0, personen, ingOpen: true, terug: !!el.dataset.terug, wake: false };
+      cook.timers = [];
+      startCookRuntime();
+      rerender();
+      break;
+    }
+
+    case 'cook-close':
+      sluitKookmodus();
+      break;
+
+    case 'cook-next':
+      state.modal.stap++;
+      rerender();
+      document.querySelector('.modal-card.cook')?.scrollTo(0, 0);
+      break;
+
+    case 'cook-prev':
+      state.modal.stap = Math.max(0, state.modal.stap - 1);
+      rerender();
+      break;
+
+    case 'cook-ing-toggle':
+      state.modal.ingOpen = !state.modal.ingOpen;
+      rerender();
+      break;
+
+    case 'cook-personen-min':
+    case 'cook-personen-plus':
+      state.modal.personen = Math.max(1, state.modal.personen + (action === 'cook-personen-plus' ? 1 : -1));
+      rerender();
+      break;
+
+    case 'cook-timer':
+      startTimer(Number(el.dataset.sec), el.dataset.label);
+      rerender();
+      break;
+
+    case 'cook-timer-stop':
+      cook.timers = cook.timers.filter((t) => String(t.id) !== el.dataset.id);
+      rerender();
+      break;
+
+    case 'cook-done': {
+      const id = state.modal.id;
+      const row = await db.addGekookt(id, todayISODate());
+      state.gekookt = [row, ...state.gekookt];
+      sluitKookmodus();
+      break;
+    }
+
     case 'open-surprise': {
       const dagen = {};
       DAGEN.forEach((d) => { dagen[d] = !state.weekmenu[d]; });
@@ -1728,7 +1924,7 @@ async function handleAction(action, el) {
       if (!dagen.length) break;
       const maxTijd = Number(m.maxTijd) > 0 ? Number(m.maxTijd) : 0;
       if (state.recipes.length === 0) { m.error = 'Je hebt nog geen recepten om uit te kiezen.'; rerender(); break; }
-      const { picks, onvolledig, versoepeld } = voorstelVoor(dagen, maxTijd, []);
+      const { picks, onvolledig } = voorstelVoor(dagen, maxTijd, []);
       const gekozen = Object.keys(picks);
       if (!gekozen.length) {
         m.error = maxTijd ? `Geen recepten gevonden die binnen ${maxTijd} minuten klaar zijn (of ze staan al in je week).` : 'Geen recepten meer beschikbaar die nog niet in je week staan.';
@@ -1744,7 +1940,6 @@ async function handleAction(action, el) {
       }
       let melding = `Voorstel ingevuld voor ${gekozen.length} ${gekozen.length === 1 ? 'dag' : 'dagen'}.`;
       if (onvolledig.length) melding += ` Voor ${onvolledig.map((d) => DAG_NAMEN[d]).join(', ')} was geen passend recept meer.`;
-      if (versoepeld) melding += ' Niet alles kon aan de proteïne-regels voldoen, daar waren te weinig recepten voor.';
       state.surprise = { undo, ids: { ...picks }, melding, maxTijd };
       state.modal = null;
       rerender();

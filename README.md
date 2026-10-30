@@ -254,3 +254,6 @@ Open de site in Safari → Deel-knop → **Zet op beginscherm** → Voeg toe. De
 ## AI-prompt (release 8)
 Nieuw recept → **AI-prompt kopiëren** geeft de volledige prompt met jouw eigen lijsten (basis, proteïne, keuken, afdelingen, eenheden). Je kunt eigen extra regels toevoegen en optioneel je ingrediëntenlijst meesturen. Meerdere recepten tegelijk importeren (JSON-array) toont voortgang en een eindoverzicht.
 
+## Kookmodus (release 10)
+Open een recept → **Kookmodus** (of op een weekmenu-dag). Stap voor stap schermvullend, met geschaalde ingrediënten, timers uit de tekst ("15 minuten") en een oventimer. Het scherm blijft aan waar de browser dat toestaat. Laatste stap: "Klaar, gekookt" zet het recept in je Gekookt-lijst.
+
