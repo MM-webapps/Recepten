@@ -369,11 +369,11 @@ function laatstGekooktTekst(recipeId) {
   return s.aantal ? `Laatst gekookt: ${relatieveTijd(s.laatst)} · ${s.aantal}×` : '';
 }
 
-// Datum van een weekmenu-dag in de huidige week (ma t/m zo), nooit in de toekomst.
+// Datum van een weekmenu-dag in de huidige week (zo t/m za), nooit in de toekomst.
 function dagDatum(dag) {
   const nu = new Date();
-  const maandag = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate() - ((nu.getDay() + 6) % 7));
-  const doel = new Date(maandag.getFullYear(), maandag.getMonth(), maandag.getDate() + DAGEN.indexOf(dag));
+  const zondag = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate() - nu.getDay());
+  const doel = new Date(zondag.getFullYear(), zondag.getMonth(), zondag.getDate() + DAGEN.indexOf(dag));
   return localISO(doel > nu ? nu : doel);
 }
 

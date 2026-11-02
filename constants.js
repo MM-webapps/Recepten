@@ -28,7 +28,8 @@ export const DEFAULT_AFDELINGEN = [
   'Kruiden & olie', 'Diepvries', 'Dranken', 'Overig'
 ];
 
-export const DAGEN = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
+// De week begint op zondag (boodschappendag) en eindigt op zaterdag.
+export const DAGEN = ['Zo', 'Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za'];
 
 export const DAG_NAMEN = {
   Ma: 'Maandag', Di: 'Dinsdag', Wo: 'Woensdag', Do: 'Donderdag',
