@@ -372,3 +372,13 @@ create policy "afdelingen_open" on afdelingen for all using (true) with check (t
 
 drop policy if exists "gekookt_open" on gekookt;
 create policy "gekookt_open" on gekookt for all using (true) with check (true);
+
+-- Release 11: kookmodus. Aantal voorbereidende stappen per onderdeel (leeg = automatisch gokken).
+alter table recipe_onderdelen add column if not exists voorbereiding_tot integer;
+
+-- Release 11: live meekijken met boodschappenvinkjes (Supabase Realtime).
+do $$ begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'instellingen') then
+    alter publication supabase_realtime add table public.instellingen;
+  end if;
+end $$;

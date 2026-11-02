@@ -399,3 +399,93 @@ export function kookStappen(recipe) {
   if (!stappen.length) stappen.push({ onderdeel: { naam: '', ingredienten: [] }, tekst: 'Dit recept heeft geen bereidingsstappen.' });
   return stappen;
 }
+
+// ─────────────────────────────────────────── Kookmodus v2 (release 11): voorbereiden + koken
+const KOP_RE = /^(voorbereiding|voorbereidingen|bereiding|bereidingswijze|bereiden)\s*:?$/i;
+const PREP_RE = /^(snijd|snij|punt|hak|snipper|pel|was|spoel|pluk|rasp|schil|ris|pers|halveer|kwart|kluts|weeg|verwarm de oven)\b/i;
+
+function schoneStap(t) { return String(t || '').replace(/^\s*[-•*]\s*/, '').trim(); }
+
+export function autoVoorbereidingTot(raw) {
+  const kopIdx = raw.findIndex((t, i) => i > 0 && KOP_RE.test(t));
+  if (kopIdx > 0) return kopIdx;
+  let k = 0;
+  while (k < raw.length && (PREP_RE.test(raw[k]) || KOP_RE.test(raw[k]))) k++;
+  return k;
+}
+
+// Splitst stappen in voorbereiding en koken. `tot` = aantal voorbereidende stappen aan het begin
+// (null = automatisch gokken). Kopjes ("Voorbereiding:") worden verborgen.
+export function schoneStappen(instructies) { return (instructies || []).map(schoneStap).filter(Boolean); }
+
+export function splitsVoorbereiding(instructies, tot) {
+  const raw = (instructies || []).map(schoneStap).filter(Boolean);
+  const k = Number.isInteger(tot) && tot >= 0 ? Math.min(tot, raw.length) : autoVoorbereidingTot(raw);
+  const nietKop = (t) => !KOP_RE.test(t);
+  let prep = raw.slice(0, k).filter(nietKop);
+  let koken = raw.slice(k).filter(nietKop);
+  if (!koken.length && prep.length) koken = [prep.pop()];
+  return { prep, koken };
+}
+
+function stamWoord(w) { return w.replace(/[^a-z0-9 ]/g, ''); }
+
+// Welke ingrediënten komen in deze tekst voor? Geeft indexen in `ingredienten`.
+function ingredientenInTekst(tekst, ingredienten) {
+  const t = ' ' + normName(tekst).replace(/[^a-z0-9 ]/g, ' ') + ' ';
+  const uit = [];
+  ingredienten.forEach((ing, idx) => {
+    const naam = normName(String(ing.naam || '').replace(/\(.*?\)/g, '')).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!naam) return;
+    const woorden = naam.split(' ').filter(Boolean);
+    const kopWoord = woorden[woorden.length - 1];
+    const kandidaten = [naam, kopWoord].filter((c, i, a) => c && a.indexOf(c) === i);
+    const hit = kandidaten.some((c) => {
+      const s = stamWoord(c);
+      if (s.length < 2) return false;
+      const re = s.length <= 3 ? new RegExp(` ${s}(s|en)? `) : new RegExp(` ${s}(s|en|n|jes|tjes|helften|helft)? `);
+      return re.test(t);
+    });
+    if (hit) uit.push(idx);
+  });
+  return uit;
+}
+
+// Bouwt de schermen voor de kookmodus: per onderdeel een voorbereidscherm (indien nodig)
+// en daarna één scherm per kookstap, met ingrediënten per stap.
+export function kookSchermen(recipe) {
+  const schermen = [];
+  const onderdelen = recipe.onderdelen || [];
+  let kookTotaal = 0;
+  const plannen = onderdelen.map((o) => {
+    const ing = o.ingredienten || [];
+    let { prep, koken } = splitsVoorbereiding(o.instructies, o.voorbereiding_tot);
+    if (!prep.length && !koken.length && ing.length) koken = ['Bereid dit onderdeel met de ingrediënten.'];
+    const alle = [...prep, ...koken];
+    const gebruik = alle.map((t) => ingredientenInTekst(t, ing));
+    const stappen = alle.map((tekst, i) => {
+      const groepen = new Map();
+      gebruik[i].forEach((idx) => {
+        const sl = normName(ing[idx].naam);
+        if (!groepen.has(sl)) groepen.set(sl, { naam: ing[idx].naam, delen: [], idxs: [] });
+        const g = groepen.get(sl);
+        g.delen.push({ hoeveelheid: ing[idx].hoeveelheid, eenheid: ing[idx].eenheid });
+        g.idxs.push(idx);
+      });
+      const chips = [...groepen.values()].map((g) => ({
+        ing: { naam: g.naam, delen: g.delen },
+        keren: gebruik.map((gg, j) => (g.idxs.some((x) => gg.includes(x)) ? j + 1 : 0)).filter(Boolean)
+      }));
+      return { tekst, nr: i + 1, chips, prep: i < prep.length };
+    });
+    kookTotaal += koken.length;
+    return { onderdeel: o, stappen, nPrep: prep.length };
+  });
+  let kookNr = 0;
+  plannen.forEach(({ onderdeel, stappen, nPrep }) => {
+    if (nPrep) schermen.push({ type: 'prep', onderdeel, stappen: stappen.slice(0, nPrep) });
+    stappen.slice(nPrep).forEach((s) => { kookNr++; schermen.push({ type: 'koken', onderdeel, ...s, kookNr, kookTotaal }); });
+  });
+  if (!schermen.length) schermen.push({ type: 'koken', onderdeel: { naam: '', ingredienten: [] }, tekst: 'Dit recept heeft geen bereidingsstappen.', nr: 1, chips: [], kookNr: 1, kookTotaal: 1 });
+  return schermen;
+}

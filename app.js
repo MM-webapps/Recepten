@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import { DEMO_MODE } from './db.js';
 import { DAGEN, DAG_NAMEN, KENMERK_STYLE } from './constants.js';
-import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten, suggestAfdeling, shoppingListToText, buildAiPrompt, verrasVoorstel, timersUitTekst, kookStappen } from './utils.js';
+import { escapeHtml, normName, fridgeMatchForRecipe, buildShoppingList, downloadJSON, slugify, normalizeRecipeJson, formatDatumNL, alleIngredienten, suggestAfdeling, shoppingListToText, buildAiPrompt, verrasVoorstel, timersUitTekst, kookSchermen, schoneStappen, autoVoorbereidingTot } from './utils.js';
 
 const state = {
   loaded: false,
@@ -55,30 +55,59 @@ async function init() {
   root.innerHTML = renderLoading();
   hydrateIcons();
   try {
-    const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients, eenheden, afdelingen, gekookt] = await Promise.all([
-      db.fetchRecipes(), db.fetchWeekmenu(), db.fetchKoelkast(), db.fetchInstellingen(),
-      db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients(), db.fetchEenheden(), db.fetchAfdelingen(), db.fetchGekookt()
-    ]);
-    state.recipes = recipes;
-    state.weekmenu = weekmenu;
-    state.fridge = fridge;
-    state.instellingen = instellingen;
-    state.kenmerkOpties = {
-      basis: kenmerkOptiesRaw.filter((o) => o.categorie === 'basis'),
-      proteine: kenmerkOptiesRaw.filter((o) => o.categorie === 'proteine'),
-      keuken: kenmerkOptiesRaw.filter((o) => o.categorie === 'keuken')
-    };
-    state.tags = tags;
-    state.ingredients = ingredients;
-    state.eenheden = eenheden;
-    state.afdelingen = afdelingen;
-    state.gekookt = gekookt;
+    await laadData();
     state.loaded = true;
     rerender();
+    startLiveSync();
   } catch (e) {
     root.innerHTML = renderLoadError((e && e.message) || 'Onbekende fout.');
     hydrateIcons();
   }
+}
+
+// Haalt alle data opnieuw op (bij opstarten en bij "Vernieuwen").
+async function laadData() {
+  const [recipes, weekmenu, fridge, instellingen, kenmerkOptiesRaw, tags, ingredients, eenheden, afdelingen, gekookt] = await Promise.all([
+    db.fetchRecipes(), db.fetchWeekmenu(), db.fetchKoelkast(), db.fetchInstellingen(),
+    db.fetchKenmerkOpties(), db.fetchTags(), db.fetchIngredients(), db.fetchEenheden(), db.fetchAfdelingen(), db.fetchGekookt()
+  ]);
+  state.recipes = recipes;
+  state.weekmenu = weekmenu;
+  state.fridge = fridge;
+  state.instellingen = instellingen;
+  state.kenmerkOpties = {
+    basis: kenmerkOptiesRaw.filter((o) => o.categorie === 'basis'),
+    proteine: kenmerkOptiesRaw.filter((o) => o.categorie === 'proteine'),
+    keuken: kenmerkOptiesRaw.filter((o) => o.categorie === 'keuken')
+  };
+  state.tags = tags;
+  state.ingredients = ingredients;
+  state.eenheden = eenheden;
+  state.afdelingen = afdelingen;
+  state.gekookt = gekookt;
+}
+
+// Live meekijken: vinkjes van een ander verschijnen direct (Supabase Realtime).
+// Daarnaast halen we de instellingen opnieuw op als de app weer in beeld komt,
+// want een telefoon in de zak verbreekt de live verbinding.
+let liveSyncGestart = false;
+function startLiveSync() {
+  if (liveSyncGestart) return;
+  liveSyncGestart = true;
+  db.abonneerOpInstellingen((rij) => {
+    state.instellingen = { ...state.instellingen, ...rij };
+    verversBoodschappenAlsZichtbaar();
+  });
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || !state.loaded) return;
+    try {
+      state.instellingen = await db.fetchInstellingen();
+      verversBoodschappenAlsZichtbaar();
+    } catch (_) { /* geen verbinding: volgende keer weer */ }
+  });
+}
+function verversBoodschappenAlsZichtbaar() {
+  if (state.activeTab === 'boodschappen' && !state.modal) rerender();
 }
 
 // Kopieert tekst naar het klembord (met een vangnet voor oudere browsers).
@@ -106,8 +135,18 @@ function flashButton(el, tekst) {
   setTimeout(() => { if (el.isConnected) { el.innerHTML = oud; hydrateIcons(); } }, 1800);
 }
 
+function werkSplitsBij(block) {
+  if (!block) return;
+  const regels = block.querySelector('.onderdeel-instructies').value.split('\n').map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+  const stappen = schoneStappen(regels);
+  const tot = block.dataset.tot === '' ? null : Number(block.dataset.tot);
+  block.querySelector('.splits').innerHTML = splitsHtml(stappen, tot);
+  hydrateIcons();
+}
+
 function onContainerInput(e) {
   const t = e.target;
+  if (t && t.matches && t.matches('.onderdeel-instructies')) { werkSplitsBij(t.closest('.onderdeel-block')); return; }
   if (t && t.matches && t.matches('[data-surprise-tijd]') && state.modal && state.modal.type === 'surprise') {
     state.modal.maxTijd = t.value;
     return;
@@ -263,6 +302,7 @@ function renderHeaderNav() {
       <div class="wrap header-top">
         <div class="brand">${icon('chef-hat')}<span class="display">MMenu-Planner</span></div>
         <div class="flex gap-2">
+          <button class="btn btn-outline btn-sm" data-action="refresh" aria-label="Vernieuwen" title="Vernieuwen">${icon('refresh-cw')}</button>
           <button class="btn btn-outline btn-sm" data-action="open-manage">${icon('settings')} Beheren</button>
           <button class="btn btn-primary btn-sm" data-action="open-add">${icon('plus')} Nieuw recept</button>
         </div>
@@ -699,6 +739,21 @@ function stopCookRuntime() {
   cook.wake = null;
 }
 
+// Swipe in de kookmodus: naar links = volgende, naar rechts = vorige.
+let swipeStart = null;
+document.addEventListener('touchstart', (e) => {
+  swipeStart = e.target.closest && e.target.closest('.cook-body') ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+document.addEventListener('touchend', (e) => {
+  if (!swipeStart || !state.modal || state.modal.type !== 'cook') return;
+  const dx = e.changedTouches[0].clientX - swipeStart.x;
+  const dy = e.changedTouches[0].clientY - swipeStart.y;
+  swipeStart = null;
+  if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+  const knop = document.querySelector(dx < 0 ? '.cook-nav [data-action="cook-next"]' : '.cook-nav [data-action="cook-prev"]');
+  if (knop && !knop.disabled) knop.click();
+}, { passive: true });
+
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.modal && state.modal.type === 'cook') {
     if (!cook.wake) requestWake();
@@ -743,27 +798,83 @@ function startTimer(seconden, label) {
   cook.timers.push({ id: cook.nextId++, label, eind: Date.now() + seconden * 1000, done: false });
 }
 
+function bedragTekst(ing, factor) {
+  return (ing.delen || []).filter((d) => d.hoeveelheid != null)
+    .map((d) => `${Math.round(d.hoeveelheid * factor * 100) / 100}${d.eenheid ? ' ' + d.eenheid : ''}`).join(' + ');
+}
+
+function kookChipsHtml(chips, factor) {
+  if (!chips || !chips.length) return '';
+  return `<div class="cook-chips">${chips.map((c) => {
+    const b = bedragTekst(c.ing, factor);
+    const meerdere = c.keren.length > 1;
+    const nrs = c.keren.length > 1 ? c.keren.slice(0, -1).join(', ') + ' en ' + c.keren[c.keren.length - 1] : '';
+    return `<span class="cook-chip ${meerdere ? 'meer' : ''}">${escapeHtml(c.ing.naam)}${b ? ` · <b>${escapeHtml(b)}</b>` : ''}${meerdere ? ` totaal<span class="cook-chip-sub">gebruik je in stap ${nrs}</span>` : ''}</span>`;
+  }).join('')}</div>`;
+}
+
 function renderCookModal() {
   const m = state.modal;
   const recipe = getRecipe(m.id);
   if (!recipe) return '';
-  const stappen = kookStappen(recipe);
-  const i = Math.min(m.stap, stappen.length - 1);
-  const stap = stappen[i];
-  const laatste = i === stappen.length - 1;
+  const schermen = kookSchermen(recipe);
+  const i = Math.min(m.stap, schermen.length - 1);
+  const sc = schermen[i];
+  const laatste = i === schermen.length - 1;
   const factor = recipe.personen > 0 ? m.personen / recipe.personen : 1;
-  const timers = timersUitTekst(stap.tekst);
-  const pct = Math.round(((i + 1) / stappen.length) * 100);
+  const pct = Math.round(((i + 1) / schermen.length) * 100);
   const nu = Date.now();
+  const sleutel = (n) => `${recipe.id}:${sc.onderdeel.id || sc.onderdeel.naam}:${n}`;
+  let inhoud = '';
+  let kop = '';
+  if (sc.type === 'prep') {
+    const klaar = sc.stappen.filter((s) => m.prepKlaar[sleutel(s.nr)]).length;
+    kop = 'Voorbereiden';
+    inhoud = `
+      <p class="text-sm text-soft mb-2">Dit kan in elke volgorde. Tik af wat klaar is (${klaar}/${sc.stappen.length}).</p>
+      <div class="cook-prep">${sc.stappen.map((s) => `
+        <button class="cook-prep-item ${m.prepKlaar[sleutel(s.nr)] ? 'klaar' : ''}" data-action="cook-prep-toggle" data-key="${escapeHtml(sleutel(s.nr))}">
+          <span class="cook-check">${m.prepKlaar[sleutel(s.nr)] ? icon('check') : ''}</span>
+          <span style="flex:1;min-width:0"><span class="cook-prep-tekst">${escapeHtml(s.tekst)}</span>${kookChipsHtml(s.chips, factor)}</span>
+        </button>`).join('')}</div>
+      ${(sc.onderdeel.ingredienten || []).length ? `
+        <button class="btn btn-outline btn-sm mb-2" data-action="cook-ing-toggle">${icon(m.ingOpen ? 'chevron-up' : 'chevron-down')} Alle ingrediënten (${sc.onderdeel.ingredienten.length})</button>
+        ${m.ingOpen ? `<div class="mb-3">${ingredientenListHtml(sc.onderdeel.ingredienten, factor)}</div>` : ''}` : ''}`;
+  } else {
+    const timers = timersUitTekst(sc.tekst);
+    kop = `Stap ${sc.nr}`;
+    const vorige = schermen[i - 1];
+    const vorigeTekst = vorige ? (vorige.type === 'prep' ? 'Voorbereiding klaar' : vorige.tekst) : '';
+    const hierna = schermen.slice(i + 1, i + 3).map((x) => (x.type === 'prep' ? `Voorbereiden${x.onderdeel.naam ? ': ' + x.onderdeel.naam : ''}` : x.tekst));
+    inhoud = `
+      ${vorigeTekst ? `<div class="cook-vorige">${icon('check')} <span>${escapeHtml(vorigeTekst)}</span></div>` : ''}
+      <div class="cook-stap">${escapeHtml(sc.tekst)}</div>
+      ${kookChipsHtml(sc.chips, factor)}
+      ${timers.length ? `<div class="flex gap-2 flex-wrap mb-3">${timers.map((t) => `<button class="btn btn-primary" data-action="cook-timer" data-sec="${t.seconden}" data-label="${escapeHtml(t.label)}">${icon('timer')} Start timer ${escapeHtml(t.label)}</button>`).join('')}</div>` : ''}
+      ${hierna.length ? `<div class="cook-hierna"><div class="cook-hierna-kop">Hierna</div>${hierna.map((t, n) => `<div class="cook-hierna-stap" style="opacity:${0.55 - n * 0.15}">${escapeHtml(t)}</div>`).join('')}</div>` : ''}
+      ${(sc.onderdeel.ingredienten || []).length ? `
+        <button class="btn btn-outline btn-sm mb-2" data-action="cook-ing-toggle">${icon(m.ingOpen ? 'chevron-up' : 'chevron-down')} Alle ingrediënten (${sc.onderdeel.ingredienten.length})</button>
+        ${m.ingOpen ? `<div class="mb-3">${ingredientenListHtml(sc.onderdeel.ingredienten, factor)}</div>` : ''}` : ''}`;
+  }
+  const overzicht = m.overzicht ? `
+    <div class="cook-overzicht">
+      <div class="flex justify-between items-center mb-2"><b class="display">Alle stappen</b><button class="btn btn-outline btn-icon btn-sm" data-action="cook-overzicht" aria-label="Sluiten">${icon('x')}</button></div>
+      ${schermen.map((x, n) => `<button class="cook-ov-rij ${n === i ? 'nu' : ''}" data-action="cook-goto" data-i="${n}">
+        <span class="mono text-soft">${x.type === 'prep' ? '◦' : x.nr}</span>
+        <span>${x.type === 'prep' ? `<b>Voorbereiden${x.onderdeel.naam ? ' · ' + escapeHtml(x.onderdeel.naam) : ''}</b> (${x.stappen.length} dingen)` : escapeHtml(x.tekst)}</span></button>`).join('')}
+    </div>` : '';
   return `
     <div class="modal-backdrop cook-backdrop">
       <div class="modal-card cook">
         <div class="flex justify-between items-center gap-3 mb-2">
           <div style="min-width:0">
             <div class="display" style="font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(recipe.titel)}</div>
-            <div class="text-sm text-soft">Stap ${i + 1} van ${stappen.length}<span id="cook-wake" ${m.wake ? '' : 'hidden'}> · scherm blijft aan</span></div>
+            <div class="text-sm text-soft">${escapeHtml(kop)}${sc.onderdeel.naam ? ' · ' + escapeHtml(sc.onderdeel.naam) : ''}<span id="cook-wake" ${m.wake ? '' : 'hidden'}> · scherm blijft aan</span></div>
           </div>
-          <button class="btn btn-outline btn-icon" data-action="cook-close" aria-label="Sluiten">${icon('x')}</button>
+          <div class="flex gap-2">
+            <button class="btn btn-outline btn-icon" data-action="cook-overzicht" aria-label="Alle stappen">${icon('list')}</button>
+            <button class="btn btn-outline btn-icon" data-action="cook-close" aria-label="Sluiten">${icon('x')}</button>
+          </div>
         </div>
         <div class="progress-track mb-3"><div class="progress-fill" style="width:${pct}%"></div></div>
         ${cook.timers.length ? `<div class="cook-timers mb-3">${cook.timers.map((t) => `
@@ -780,18 +891,14 @@ function renderCookModal() {
           </div>
           ${recipe.oventijd > 0 ? `<button class="btn btn-outline btn-sm" style="margin-left:auto" data-action="cook-timer" data-sec="${recipe.oventijd * 60}" data-label="oven ${recipe.oventijd} min">${icon('timer')} Oventimer ${recipe.oventijd} min</button>` : ''}
         </div>
-        ${stap.onderdeel.naam ? `<h3 class="display mb-2" style="font-size:15px;color:var(--teal)">${escapeHtml(stap.onderdeel.naam)}</h3>` : ''}
-        ${(stap.onderdeel.ingredienten || []).length ? `
-          <button class="btn btn-outline btn-sm mb-2" data-action="cook-ing-toggle">${icon(m.ingOpen ? 'chevron-up' : 'chevron-down')} Ingrediënten (${stap.onderdeel.ingredienten.length})</button>
-          ${m.ingOpen ? `<div class="mb-3">${ingredientenListHtml(stap.onderdeel.ingredienten, factor)}</div>` : ''}` : ''}
-        <div class="cook-stap">${escapeHtml(stap.tekst)}</div>
-        ${timers.length ? `<div class="flex gap-2 flex-wrap mb-3">${timers.map((t) => `<button class="btn btn-primary" data-action="cook-timer" data-sec="${t.seconden}" data-label="${escapeHtml(t.label)}">${icon('timer')} Start timer ${escapeHtml(t.label)}</button>`).join('')}</div>` : ''}
+        <div class="cook-body">${inhoud}</div>
         <div class="cook-nav">
           <button class="btn btn-outline" data-action="cook-prev" ${i === 0 ? 'disabled' : ''}>${icon('arrow-left')} Vorige</button>
           ${laatste
             ? `<button class="btn btn-primary" data-action="cook-done">${icon('check')} Klaar, gekookt</button>`
-            : `<button class="btn btn-primary" data-action="cook-next">Volgende ${icon('arrow-right')}</button>`}
+            : `<button class="btn btn-primary" data-action="cook-next">${sc.type === 'prep' ? 'Alles klaar, start met koken' : 'Volgende'} ${icon('arrow-right')}</button>`}
         </div>
+        ${overzicht}
       </div>
     </div>
   `;
@@ -948,12 +1055,29 @@ function ingredientNamenDatalist() {
   return `<datalist id="ingredient-namen">${state.ingredients.map((i) => `<option value="${escapeHtml(i.naam)}">`).join('')}</datalist>`;
 }
 
+// Lijn "Hier begint het koken" tussen de stappen: tik tussen twee stappen om de lijn te verplaatsen.
+function splitsHtml(stappen, tot) {
+  if (stappen.length < 2) return '';
+  const auto = !Number.isInteger(tot);
+  const k = auto ? autoVoorbereidingTot(stappen) : Math.min(tot, stappen.length);
+  const lijn = `<div class="splits-lijn">${icon('flame')} Hier begint het koken</div>`;
+  const gat = (n) => `<button type="button" class="splits-gat" data-action="set-split" data-n="${n}">tik: koken begint hier</button>`;
+  let h = `<div class="splits-kop"><b>Voorbereiding en koken</b><span class="text-sm text-soft">${auto ? 'automatisch gekozen' : 'door jou gekozen'}</span>${auto ? '' : `<button type="button" class="btn btn-outline btn-sm" data-action="set-split" data-n="auto">Automatisch</button>`}</div>`;
+  h += '<div class="text-sm text-soft mb-1">Stappen boven de lijn mag je in elke volgorde doen (snijden, wegen).</div>';
+  stappen.forEach((t, n) => {
+    h += n === k ? lijn : (n > 0 ? gat(n) : gat(0));
+    h += `<div class="splits-stap ${n < k ? 'prep' : ''}">${escapeHtml(t)}</div>`;
+  });
+  h += k >= stappen.length ? lijn : gat(stappen.length);
+  return h;
+}
+
 function onderdeelBlockHtml(onderdeel) {
   onderdeel = onderdeel || {};
   const ingredienten = (onderdeel.ingredienten && onderdeel.ingredienten.length) ? onderdeel.ingredienten : [{}];
   const instructiesText = (onderdeel.instructies || []).join('\n');
   return `
-    <div class="card onderdeel-block mb-3" style="padding:14px">
+    <div class="card onderdeel-block mb-3" style="padding:14px" data-tot="${Number.isInteger(onderdeel.voorbereiding_tot) ? onderdeel.voorbereiding_tot : ''}">
       <div class="flex items-center gap-2 mb-3">
         <input class="input onderdeel-naam" style="flex:1" placeholder="Naam onderdeel (optioneel, bv. Marinade)" value="${escapeHtml(onderdeel.naam || '')}">
         <button type="button" class="btn btn-outline btn-icon" data-action="remove-onderdeel" title="Onderdeel verwijderen">${icon('x')}</button>
@@ -965,6 +1089,7 @@ function onderdeelBlockHtml(onderdeel) {
       <div class="ing-rows mb-3">${ingredienten.map(ingredientRowHtml).join('')}</div>
       <label class="field-label">Bereidingswijze (één stap per regel)</label>
       <textarea class="input onderdeel-instructies" rows="4" placeholder="Snijd de ui fijn.&#10;Bak de kip aan.">${escapeHtml(instructiesText)}</textarea>
+      <div class="splits">${splitsHtml(schoneStappen(onderdeel.instructies || []), Number.isInteger(onderdeel.voorbereiding_tot) ? onderdeel.voorbereiding_tot : null)}</div>
     </div>
   `;
 }
@@ -1088,7 +1213,8 @@ async function handleRecipeFormSubmit(e) {
       .map((i) => ({ naam: i.naam, hoeveelheid: i.hoeveelheid === '' ? null : Number(i.hoeveelheid), eenheid: i.eenheid, afdeling: i.afdeling }));
     const instructiesText = block.querySelector('.onderdeel-instructies').value;
     const instructies = instructiesText.split('\n').map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
-    return { naam, ingredienten, instructies };
+    const totRaw = block.dataset.tot;
+    return { naam, ingredienten, instructies, voorbereiding_tot: totRaw === '' || totRaw == null ? null : Number(totRaw) };
   }).filter((o) => o.ingredienten.length || o.instructies.length || o.naam);
   const finalOnderdelen = onderdelen.length ? onderdelen : [{ naam: '', ingredienten: [], instructies: [] }];
   const tagIds = Array.from(form.querySelectorAll('[name="tagIds"]:checked')).map((cb) => cb.value);
@@ -1859,7 +1985,7 @@ async function handleAction(action, el) {
       const recipe = getRecipe(el.dataset.id);
       if (!recipe) break;
       const personen = Number(el.dataset.personen) || (el.dataset.terug ? (state.viewPersonen || recipe.personen) : recipe.personen);
-      state.modal = { type: 'cook', id: recipe.id, stap: 0, personen, ingOpen: true, terug: !!el.dataset.terug, wake: false };
+      state.modal = { type: 'cook', id: recipe.id, stap: 0, personen, ingOpen: false, prepKlaar: {}, overzicht: false, terug: !!el.dataset.terug, wake: false };
       cook.timers = [];
       startCookRuntime();
       rerender();
@@ -1879,6 +2005,23 @@ async function handleAction(action, el) {
     case 'cook-prev':
       state.modal.stap = Math.max(0, state.modal.stap - 1);
       rerender();
+      break;
+
+    case 'cook-prep-toggle':
+      state.modal.prepKlaar[el.dataset.key] = !state.modal.prepKlaar[el.dataset.key];
+      rerender();
+      break;
+
+    case 'cook-overzicht':
+      state.modal.overzicht = !state.modal.overzicht;
+      rerender();
+      break;
+
+    case 'cook-goto':
+      state.modal.stap = Number(el.dataset.i);
+      state.modal.overzicht = false;
+      rerender();
+      document.querySelector('.modal-card.cook')?.scrollTo(0, 0);
       break;
 
     case 'cook-ing-toggle':
@@ -2108,6 +2251,20 @@ async function handleAction(action, el) {
     case 'download-json': {
       const recipe = getRecipe(el.dataset.id);
       downloadJSON(recipe, slugify(recipe.titel) + '.json');
+      break;
+    }
+
+    case 'set-split': {
+      const block = el.closest('.onderdeel-block');
+      block.dataset.tot = el.dataset.n === 'auto' ? '' : el.dataset.n;
+      werkSplitsBij(block);
+      break;
+    }
+
+    case 'refresh': {
+      el.disabled = true;
+      el.classList.add('draait');
+      try { await laadData(); rerender(); } catch (e) { alert('Vernieuwen lukt niet: ' + ((e && e.message) || 'geen verbinding')); }
       break;
     }
 

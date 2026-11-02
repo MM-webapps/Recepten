@@ -98,6 +98,7 @@ function buildDemoOnderdelen(onderdelen) {
     naam: o.naam || '',
     volgorde: oi + 1,
     instructies: o.instructies || [],
+    voorbereiding_tot: Number.isInteger(o.voorbereiding_tot) ? o.voorbereiding_tot : null,
     ingredienten: (o.ingredienten || []).filter((i) => i.naam).map((ing, ii) => {
       const canon = demoResolveIngredient(ing.naam, ing.afdeling);
       return {
@@ -232,7 +233,7 @@ function demoTagsFor(recipeId) {
 }
 
 // ─────────────────────────────── Recepten
-const RECIPE_SELECT = '*, recipe_tags(tags(id, naam)), recipe_onderdelen(id, naam, volgorde, instructies, recipe_ingredienten(id, hoeveelheid, eenheid, notitie, volgorde, ingredients(id, naam)))';
+const RECIPE_SELECT = '*, recipe_tags(tags(id, naam)), recipe_onderdelen(id, naam, volgorde, instructies, voorbereiding_tot, recipe_ingredienten(id, hoeveelheid, eenheid, notitie, volgorde, ingredients(id, naam)))';
 
 function transformRecipeRow(row) {
   const { recipe_tags, recipe_onderdelen, ...rest } = row;
@@ -243,6 +244,7 @@ function transformRecipeRow(row) {
       id: o.id,
       naam: o.naam || '',
       instructies: o.instructies || [],
+      voorbereiding_tot: Number.isInteger(o.voorbereiding_tot) ? o.voorbereiding_tot : null,
       ingredienten: (o.recipe_ingredienten || [])
         .slice()
         .sort((a, b) => a.volgorde - b.volgorde)
@@ -309,7 +311,7 @@ async function saveOnderdelen(recipeId, onderdelen, ctx) {
   if (!onderdelen.length) return;
 
   const { data: ros, error: roErr } = await supabase.from('recipe_onderdelen')
-    .insert(onderdelen.map((o, i) => ({ recipe_id: recipeId, naam: o.naam || '', volgorde: i + 1, instructies: o.instructies || [] })))
+    .insert(onderdelen.map((o, i) => ({ recipe_id: recipeId, naam: o.naam || '', volgorde: i + 1, instructies: o.instructies || [], voorbereiding_tot: Number.isInteger(o.voorbereiding_tot) ? o.voorbereiding_tot : null })))
     .select();
   check(roErr);
   const onderdeelId = new Map(ros.map((r) => [r.volgorde, r.id]));
@@ -474,6 +476,17 @@ export async function fetchInstellingen() {
   const { data, error } = await supabase.from('instellingen').select('*').eq('id', 1).single();
   check(error);
   return data;
+}
+
+// Luistert naar wijzigingen in de instellingen (o.a. boodschappenvinkjes) van anderen.
+export function abonneerOpInstellingen(callback) {
+  if (DEMO_MODE || !supabase) return () => {};
+  const kanaal = supabase.channel('instellingen-live')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'instellingen' }, (payload) => {
+      if (payload && payload.new) callback(payload.new);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(kanaal);
 }
 
 export async function updateInstellingen(patch) {
